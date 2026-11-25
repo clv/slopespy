@@ -236,3 +236,17 @@ html.sheet-open, html.sheet-open body { overflow: hidden; overscroll-behavior: n
   .tool-btns .btn.icon { width: 30px; }
 }
 .stats .site-row { display: flex; flex-wrap: wrap; gap: 2px 14px; }
+
+/* browse tree in the resort search */
+.results li.node { cursor: pointer; display: flex; align-items: center; gap: 8px; font-weight: 600; color: var(--fg); padding: 7px 8px; border-radius: 6px; }
+.results li.node:hover { background: #1d2833; }
+.results li.node .v { margin-left: auto; color: var(--muted); font-weight: 400; font-size: 12px; }
+.results li.node .tw { width: 0; height: 0; border: 4.5px solid transparent; border-left: 6px solid var(--muted); border-right: 0; transition: transform .15s; flex: none; }
+.results li.node.open .tw { transform: rotate(90deg); }
+.results li.cont { position: sticky; top: -4px; z-index: 1; background: #161e27; font-size: 13.5px; }
+.results li.ctry { padding-left: 22px; font-weight: 550; }
+.results li.ctry ~ li[data-k], .results li.reg { padding-left: 36px; }
+.results li.more { padding-left: 36px; color: var(--accent); font-weight: 500; font-size: 13px; }
+.results li.reg { color: var(--muted); font-size: 12px; font-weight: 600; padding-top: 8px; padding-bottom: 2px; }
+.results li.reg span { font-weight: 400; opacity: .7; }
+@media (max-width: 760px) { .results li.node { min-height: 44px; } }

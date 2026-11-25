@@ -158,28 +158,105 @@ function setupPickers() {
     else if (top < list.scrollTop + 40) list.scrollTop = top - 40;
     else if (top + h > list.scrollTop + view) list.scrollTop = top + h - view;
   };
+  // ----- browse tree (empty query): continent > country > biggest resorts, "show all" by region -----
+  const tree = { cont: null, ctry: null, all: null };
+  let groups = null;   // continent -> country -> resorts (by size rank)
+  const buildGroups = () => {
+    const g = new Map();
+    for (const r of INDEX) {
+      const c = r.cont || 'Other', k = r.countryName || r.country || 'Other';
+      if (!g.has(c)) g.set(c, new Map());
+      const m = g.get(c);
+      if (!m.has(k)) m.set(k, []);
+      m.get(k).push(r);
+    }
+    const byCount = m => new Map([...m].sort((x, y) => size(y[1]) - size(x[1])));
+    const size = v => v instanceof Map ? [...v.values()].reduce((n, l) => n + l.length, 0) : v.length;
+    return byCount(new Map([...g].map(([c, m]) => [c, byCount(m)])));
+  };
+  // which resorts a country shows before "Show all": at least 20 km of runs, min 5, max 25; small countries show everything
+  const topOf = list => list.length <= 12 ? list : list.slice(0, Math.min(25, Math.max(5, list.filter(r => r.runKm >= 20).length)));
+  const km = r => `${fmt(r.runKm)} km of runs`;
+  const row = (r, val, sub = [r.region, r.countryName || r.country].filter(Boolean).join(', ')) => {
+    const k = picker.items.push({ r }) - 1;
+    return `<li role="option" data-k="${k}" class="${r.id === cur ? 'cur' : ''}"><span class="n"><span class="nm">${esc(r.name)}</span> <span class="m">${esc(sub)}</span></span><span class="v">${val}</span></li>`;
+  };
+  const renderTree = () => {
+    groups ??= buildGroups();
+    const here = sides[picker.side].resort;
+    picker.items = []; picker.act = -1;
+    let html = '';
+    if (here) {
+      html += `<li class="h1">Near ${esc(here.name)}</li>`;
+      for (const [r, d] of nearestResorts(here, 8)) html += row(r, `${fmt(d)} km away`);
+    }
+    html += '<li class="h1">Browse</li>';
+    for (const [c, countries] of groups) {
+      const n = [...countries.values()].reduce((s, l) => s + l.length, 0), open = tree.cont === c;
+      html += `<li class="node cont${open ? ' open' : ''}" data-cont="${esc(c)}" role="button" aria-expanded="${open}"><span class="tw"></span>${esc(c)}<span class="v">${fmt(n)}</span></li>`;
+      if (!open) continue;
+      for (const [k, list] of countries) {
+        const openK = tree.ctry === k;
+        html += `<li class="node ctry${openK ? ' open' : ''}" data-ctry="${esc(k)}" role="button" aria-expanded="${openK}"><span class="tw"></span>${esc(k)}<span class="v">${fmt(list.length)}</span></li>`;
+        if (!openK) continue;
+        const top = topOf(list);
+        if (tree.all === k && top.length < list.length) {
+          const regions = new Map();
+          for (const r of list) { const g = r.region || 'Other'; if (!regions.has(g)) regions.set(g, []); regions.get(g).push(r); }
+          const runKm = rs => rs.reduce((t, r) => t + (r.runKm || 0), 0);
+          for (const [g, rs] of [...regions].sort((x, y) => runKm(y[1]) - runKm(x[1]))) {   // biggest regions first
+            html += `<li class="h2 reg">${esc(g)} <span>${rs.length}</span></li>`;
+            for (const r of rs) html += row(r, km(r), '');
+          }
+        } else {
+          for (const r of top) html += row(r, km(r), r.region || '');
+          if (top.length < list.length) html += `<li class="node more" data-all="${esc(k)}" role="button">Show all ${fmt(list.length)} in ${esc(k)}</li>`;
+        }
+      }
+    }
+    list.innerHTML = html;
+    shown = picker.items.length;   // nothing left for the chunk loader
+    count.textContent = 'Type to search 4,000+ resorts';
+  };
   const render = () => {
     const q = norm(input.value.trim());
     const words = q.split(/\s+/).filter(Boolean);
-    const here = sides[picker.side].resort, other = sides[1 - picker.side].resort;
+    const here = sides[picker.side].resort;
     cur = here?.id;
-    const km = r => `${fmt(r.runKm)} km of runs`;
-    if (words.length) {
-      const hits = INDEX.filter(r => words.every(w => r._s.includes(w))).sort((a, b) => a.rank - b.rank);
-      picker.items = hits.map(r => ({ r, val: km(r) }));
-      count.textContent = `${fmt(hits.length)} match${hits.length === 1 ? '' : 'es'}`;
-    } else {
-      const near = here ? nearestResorts(here, 10).map(([r, d], i) => ({ r, val: `${fmt(d)} km away`, head: i ? null : `Near ${here.name}` })) : [];
-      const top = INDEX.filter(r => r !== other).slice(0, 30).map((r, i) => ({ r, val: km(r), head: i ? null : 'Biggest resorts' }));
-      picker.items = [...near, ...top];
-      count.textContent = 'Type to search 4,000+ resorts';
+    if (!words.length) {
+      groups ??= buildGroups();
+      if (here) {
+        const c = here.cont || 'Other', k = here.countryName || here.country;
+        const inCountry = groups.get(c)?.get(k) || [];
+        Object.assign(tree, { cont: c, ctry: k, all: topOf(inCountry).includes(here) ? null : k });
+      }
+      renderTree();
+      list.scrollTop = 0;
+      const curLi = [...list.querySelectorAll('li.cur')].pop();
+      if (curLi && curLi.offsetTop + curLi.offsetHeight > list.clientHeight) reveal(curLi, true);   // else keep Nearby in view
+      return;
     }
+    const hits = INDEX.filter(r => words.every(w => r._s.includes(w))).sort((a, b) => a.rank - b.rank);
+    picker.items = hits.map(r => ({ r, val: km(r) }));
+    count.textContent = `${fmt(hits.length)} match${hits.length === 1 ? '' : 'es'}`;
     picker.act = 0;
     list.innerHTML = ''; shown = 0;
     if (!picker.items.length) list.innerHTML = '<li class="h2">No resorts match</li>';
     more();
     list.scrollTop = 0;
   };
+  list.addEventListener('click', e => {
+    const n = e.target.closest('li.node');
+    if (!n) return;
+    const keepTop = n.getBoundingClientRect().top - list.getBoundingClientRect().top;
+    let sel;
+    if (n.dataset.cont != null) { const c = n.dataset.cont; tree.cont = tree.cont === c ? null : c; tree.ctry = null; tree.all = null; sel = `li.cont[data-cont="${CSS.escape(c)}"]`; }
+    else if (n.dataset.ctry != null) { const k = n.dataset.ctry; tree.ctry = tree.ctry === k ? null : k; tree.all = null; sel = `li.ctry[data-ctry="${CSS.escape(k)}"]`; }
+    else if (n.dataset.all != null) { tree.all = n.dataset.all; sel = `li.ctry[data-ctry="${CSS.escape(n.dataset.all)}"]`; }
+    renderTree();
+    const h = list.querySelector(sel);
+    if (h) list.scrollTop = h.offsetTop - keepTop;   // keep the tapped header where it was
+  });
   list.addEventListener('scroll', () => { if (list.scrollTop + list.clientHeight > list.scrollHeight - 600) more(); }, { passive: true });
   // keep the sheet inside the visible area when the phone keyboard is up
   const vv = window.visualViewport;
