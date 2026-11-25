@@ -1,12 +1,14 @@
 <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
-  <defs><clipPath id="lens"><circle cx="27" cy="27" r="19"/></clipPath></defs>
-  <circle cx="27" cy="27" r="19" fill="#16212c"/>
+  <defs><clipPath id="lens"><circle cx="26" cy="26" r="22"/></clipPath></defs>
+  <path d="M43 43 L56 56" stroke="#0f1419" stroke-width="10" stroke-linecap="round"/>
+  <circle cx="26" cy="26" r="24.5" fill="#0f1419"/>
+  <circle cx="26" cy="26" r="22" fill="#16212c"/>
   <g clip-path="url(#lens)">
-    <path d="M2 50 L19 21 L27 33 L31 27 L50 50 Z" fill="#4fa3ff"/>
-    <path d="M19 21 L14.2 29.2 L17.5 27.5 L19.5 30 L22 27.5 L23.7 28.4 Z" fill="#fff"/>
-    <path d="M16 50 L35 18 L56 50 Z" fill="#ff8a3d"/>
-    <path d="M35 18 L29.6 27.1 L33 25.4 L35.4 28.2 L38 25.2 L40.6 26.8 Z" fill="#fff"/>
+    <path d="M-2 54 L17 20 L26 34 L30.5 27 L52 54 Z" fill="#4fa3ff"/>
+    <path d="M17 20 L11.6 29.5 L15.3 27.6 L17.5 30.4 L20.3 27.6 L22.2 28.6 Z" fill="#fff"/>
+    <path d="M13 54 L35 16 L59 54 Z" fill="#ff8a3d"/>
+    <path d="M35 16 L28.8 26.5 L32.7 24.5 L35.4 27.7 L38.4 24.3 L41.4 26.1 Z" fill="#fff"/>
   </g>
-  <circle cx="27" cy="27" r="19" fill="none" stroke="#e8edf2" stroke-width="4.5"/>
-  <path d="M41 41 L56.5 56.5" stroke="#e8edf2" stroke-width="7.5" stroke-linecap="round"/>
+  <circle cx="26" cy="26" r="22" fill="none" stroke="#e8edf2" stroke-width="3.5"/>
+  <path d="M43 43 L56 56" stroke="#e8edf2" stroke-width="5.5" stroke-linecap="round"/>
 </svg>

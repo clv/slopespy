@@ -102,8 +102,12 @@ async function init() {
   setupTools();
   // URL: /<first-resort>#<second-resort>   (old links: #a=<id>&b=<id>)
   let { a, b } = parseUrl();
-  a = a || 'whistler-blackcomb';
-  b = b && b !== a ? b : (a === 'vail' ? 'whistler-blackcomb' : 'vail');
+  // nothing in the URL: the last pair this visitor looked at, else Big Sky vs Sugar Bowl
+  let saved = [];
+  try { saved = JSON.parse(localStorage.getItem('sc.pair') || '[]'); } catch {}
+  if (!a && !b && byId.has(saved[0]) && byId.has(saved[1])) [a, b] = saved;
+  a = a || 'big-sky';
+  b = b && b !== a ? b : (a === 'sugar-bowl' ? 'big-sky' : 'sugar-bowl');
   window.addEventListener('hashchange', () => {
     const { b } = parseUrl();
     window.closeAbout?.();
@@ -317,9 +321,23 @@ function updateHash() {
   if (!A || !B) return;
   history.replaceState(null, '', `${BASE}${A.id}#${B.id}`);
   document.title = `${A.name} vs ${B.name} · Slope Spy`;
+  try { localStorage.setItem('sc.pair', JSON.stringify([A.id, B.id])); } catch {}
 }
 
-function setStatus(side, msg) { $('.status', panels[side]).textContent = msg; }
+function setStatus(side, msg) {
+  $('.status', panels[side]).textContent = msg;
+  const sp = spinners[side];
+  sp.hidden = !msg || msg.startsWith('Failed');
+  sp.querySelector('span').textContent = msg;
+}
+const spinners = [0, 1].map(i => {
+  const el = document.createElement('div');
+  el.className = 'loading'; el.dataset.side = i; el.hidden = true;
+  el.setAttribute('role', 'status');
+  el.innerHTML = '<i></i><span></span>';
+  document.getElementById('stage').appendChild(el);
+  return el;
+});
 
 // ---------- terrain ----------
 const tileCache = new Map();
@@ -566,6 +584,7 @@ function buildSide(S, data, terrain, landcover, features) {
   lineSets(data.runs.concat(data.lifts), (f, ring) => ring.forEach(([lo, la]) => { xs.push(toX(lo)); zs.push(toZ(la)); }));
   S.footprint = [Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)];
   S.area = data.boundary ? polyArea(data.boundary, toX, toZ) : null;
+  S.website = data.website || null;
   S.extent = Math.max((px1 - px0), (py1 - py0)) * (40075016 * Math.cos(cy * DEG) / worldPx(z));
   S.mid = ((data.top ?? hmax) + (data.base ?? hmin)) / 2;
   S.zoom = z;
@@ -643,11 +662,11 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
     for (const [, ring] of features.b || []) { path(ring); ctx.closePath(); }
     ctx.fill();
   }
-  if (boundary) {  // shade everything outside the ski-area boundary by 10%
+  if (boundary) {  // shade everything outside the ski-area boundary by 20%
     const sx = W / (crop[2] - crop[0]), sy = H / (crop[3] - crop[1]);
     const shade = document.createElement('canvas'); shade.width = W; shade.height = H;
     const g = shade.getContext('2d');
-    g.fillStyle = 'rgba(0,0,0,0.1)'; g.fillRect(0, 0, W, H);
+    g.fillStyle = 'rgba(0,0,0,0.2)'; g.fillRect(0, 0, W, H);
     g.globalCompositeOperation = 'destination-out';
     g.fillStyle = '#000';
     for (const poly of boundary.t === 'Polygon' ? [boundary.c] : boundary.c) {
@@ -1111,7 +1130,10 @@ function renderPanel(side, r, S) {
   if (S?.buildingCount) rows.push(['Buildings', fmt(S.buildingCount), 1]);
   if (S?.cell) rows.push(['Terrain detail', `~${fmt(S.cell)} m grid`, 1]);
   rows.push(['Size rank', `#${r.rank} of ${INDEX.length}`, 1]);
-  $('.stats', p).innerHTML = rows.map(([k, v, x]) => `<dt${x ? ' class="x"' : ''}>${k}</dt><dd${x ? ' class="x"' : ''}>${v}</dd>`).join('');
+  let site = '';
+  try { const u = new URL(S?.website || ''); if (/^https?:$/.test(u.protocol)) site = `<a class="site" href="${esc(u.href)}" target="_blank" rel="noopener">${esc(u.hostname.replace(/^www\./, ''))} ↗</a>`; } catch {}
+  $('.stats', p).innerHTML = rows.map(([k, v, x]) => `<dt${x ? ' class="x"' : ''}>${k}</dt><dd${x ? ' class="x"' : ''}>${v}</dd>`).join('')
+    + (site ? `<dd class="site-row">${site}</dd>` : '');
   updateLegend();
 }
 
