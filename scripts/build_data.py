@@ -152,6 +152,14 @@ def main():
             try: rec['o'] = int(occ)
             except (TypeError, ValueError): pass
         if p.get('bubble'): rec['b'] = 1
+        if p.get('heating'): rec['h'] = 1
+        if p.get('detachable'): rec['dt'] = 1
+        for key, short in (('capacity', 'cap'), ('duration', 'dur')):
+            try:
+                v = int(float(p.get(key))) if p.get(key) else None
+            except (TypeError, ValueError):
+                v = None
+            if v: rec[short] = v
         if p.get('ref') and not p.get('name'): rec['n'] = p.get('ref')
         for i in m:
             lifts[i].append(rec)

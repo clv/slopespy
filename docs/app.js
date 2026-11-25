@@ -19,11 +19,11 @@ const CONVENTIONS = {
   north_america: { novice: 'green', easy: 'green', intermediate: 'blue', advanced: 'black', expert: 'black' },
   japan:         { novice: 'green', easy: 'green', intermediate: 'red',  advanced: 'black', expert: 'black' },
 };
-const LIFT_COLOR = '#a743d9';
+const LIFT_COLOR = '#ffd23f';
 const SMALL_SCREEN = matchMedia('(pointer: coarse)').matches || innerWidth < 800;
 const TEX_SIZE = SMALL_SCREEN ? 2048 : 4096;       // ground texture width (land cover + roads + parking)
 const MAX_TREES = SMALL_SCREEN ? 30000 : 120000;   // per side
-const BOUNDARY_COLOR = '#c9a227';
+const BOUNDARY_COLOR = '#c27ff0';
 
 // ---------- web mercator helpers ----------
 const worldPx = z => 256 * 2 ** z;
@@ -49,7 +49,7 @@ controls.dampingFactor = 0.12;
 controls.maxPolarAngle = Math.PI / 2 - 0.02;
 controls.addEventListener('change', requestRender);
 
-const settings = { exag: 3, absElev: false, runs: true, lifts: true, labels: true, trees: true, town: true, grid: true, view: '3d' };
+const settings = { exag: 2, absElev: false, runs: true, lifts: true, labels: true, trees: true, town: true, grid: true, view: '3d' };
 const lineMaterials = new Set();
 const gridUniform = { value: 1 };
 
@@ -88,39 +88,91 @@ async function init() {
 }
 
 // ---------- search pickers ----------
+const SORTS = {
+  region: { label: 'Continent › country', get: null },
+  name:   { label: 'Name (A–Z)', get: r => r.name, asc: true },
+  runKm:  { label: 'Run length', get: r => r.runKm, fmt: v => `${fmt(v)} km` },
+  nRuns:  { label: 'Number of runs', get: r => r.nRuns, fmt: v => `${fmt(v)} runs` },
+  vert:   { label: 'Vertical', get: r => r.vert, fmt: v => `${fmt(v)} m` },
+  lifts:  { label: 'Lifts', get: r => r.lifts, fmt: v => `${fmt(v)} lifts` },
+  top:    { label: 'Top elevation', get: r => r.top, fmt: v => `${fmt(v)} m` },
+  base:   { label: 'Base elevation', get: r => r.base, fmt: v => `${fmt(v)} m` },
+};
+const CONT_ORDER = ['Europe', 'North America', 'Asia', 'Oceania', 'South America', 'Africa', 'Other'];
+let sortKey = 'region';
+try { sortKey = localStorage.getItem('sc.sort') || 'region'; if (!SORTS[sortKey]) sortKey = 'region'; } catch {}
+
+function sortedIndex(items) {
+  const s = SORTS[sortKey];
+  if (sortKey === 'region') {
+    return items.slice().sort((a, b) => (CONT_ORDER.indexOf(a.cont) - CONT_ORDER.indexOf(b.cont))
+      || (a.countryName || a.country || '').localeCompare(b.countryName || b.country || '')
+      || a.name.localeCompare(b.name));
+  }
+  return items.slice().sort((a, b) => {
+    const va = s.get(a), vb = s.get(b);
+    if (va == null) return 1; if (vb == null) return -1;
+    return s.asc ? String(va).localeCompare(String(vb)) : vb - va;
+  });
+}
+
 function setupPickers() {
-  document.querySelectorAll('.picker').forEach(p => {
+  const pickers = [...document.querySelectorAll('.picker')];
+  pickers.forEach(p => {
     const side = +p.dataset.side;
-    const input = $('input', p), list = $('.results', p);
+    const input = $('input', p), pop = $('.pop', p), list = $('.results', p), sortSel = $('.sort', p), count = $('.count', p);
+    sortSel.innerHTML = Object.entries(SORTS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
     let items = [], act = 0;
-    const show = () => {
+    const open = () => p.classList.contains('open');
+    const render = (scrollToCurrent) => {
+      sortSel.value = sortKey;
       const q = norm(input.value.trim());
       const words = q.split(/\s+/).filter(Boolean);
-      items = INDEX.filter(r => words.every(w => r._s.includes(w)));
-      if (q) items.sort((x, y) => (norm(y.name).startsWith(q) - norm(x.name).startsWith(q)) || x.rank - y.rank);
-      items = items.slice(0, 80);
-      act = 0;
-      list.innerHTML = items.map((r, k) => `<li role="option" data-k="${k}"${k === 0 ? ' class="act"' : ''}><span>${esc(r.name)} <span class="m">${esc(r.countryName || r.country)}</span></span><span class="m">${r.runKm} km</span></li>`).join('')
-        || '<li class="m">No match</li>';
-      list.classList.add('open');
+      items = sortedIndex(INDEX.filter(r => words.every(w => r._s.includes(w))));
+      const cur = sides[side].resort?.id;
+      const metric = SORTS[sortKey].fmt ? SORTS[sortKey] : SORTS.runKm;
+      let html = '', lastC = null, lastK = null;
+      act = Math.max(0, scrollToCurrent ? items.findIndex(r => r.id === cur) : 0);
+      items.forEach((r, k) => {
+        if (sortKey === 'region') {
+          if (r.cont !== lastC) { html += `<li class="h1">${esc(r.cont)}</li>`; lastC = r.cont; lastK = null; }
+          const cn = r.countryName || r.country || '—';
+          if (cn !== lastK) { html += `<li class="h2">${esc(cn)}</li>`; lastK = cn; }
+        }
+        const sub = sortKey === 'region' ? (r.region || '') : (r.countryName || r.country || '');
+        const val = metric.get(r);
+        html += `<li role="option" data-k="${k}" class="${k === act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n">${esc(r.name)} <span class="m">${esc(sub)}</span></span><span class="v">${val == null ? '–' : metric.fmt(val)}</span></li>`;
+      });
+      list.innerHTML = html || '<li class="h2">No resorts match</li>';
+      count.textContent = `${fmt(items.length)} resort${items.length === 1 ? '' : 's'}`;
+      list.querySelector('li.act')?.scrollIntoView({ block: scrollToCurrent ? 'center' : 'nearest' });
     };
-    const pick = k => { const r = items[k]; if (!r) return; list.classList.remove('open'); input.blur(); selectResort(side, r.id); };
-    input.addEventListener('focus', () => { input.select(); show(); });
-    input.addEventListener('input', show);
+    const close = () => { p.classList.remove('open'); input.value = sides[side].resort?.name || ''; };
+    const openPop = () => {
+      if (open()) return;
+      pickers.forEach(o => o !== p && o.classList.contains('open') && o.querySelector('input').blur());
+      p.classList.add('open');
+      input.placeholder = sides[side].resort?.name || 'Search resorts…';
+      input.value = '';
+      render(true);
+    };
+    const pick = k => { const r = items[k]; if (!r) return; close(); input.blur(); selectResort(side, r.id); };
+    input.addEventListener('focus', openPop);
+    input.addEventListener('click', openPop);
+    input.addEventListener('input', () => render(false));
+    sortSel.addEventListener('change', () => { sortKey = sortSel.value; try { localStorage.setItem('sc.sort', sortKey); } catch {} render(true); input.focus(); });
     input.addEventListener('keydown', e => {
+      const opts = [...list.querySelectorAll('li[data-k]')];
       if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
         act = Math.max(0, Math.min(items.length - 1, act + (e.key === 'ArrowDown' ? 1 : -1)));
-        [...list.children].forEach((li, k) => li.classList.toggle('act', k === act));
-        list.children[act]?.scrollIntoView({ block: 'nearest' });
+        opts.forEach(li => li.classList.toggle('act', +li.dataset.k === act));
+        list.querySelector('li.act')?.scrollIntoView({ block: 'nearest' });
       } else if (e.key === 'Enter') { e.preventDefault(); pick(act); }
-      else if (e.key === 'Escape') { list.classList.remove('open'); input.blur(); }
+      else if (e.key === 'Escape') { close(); input.blur(); }
     });
-    input.addEventListener('blur', () => setTimeout(() => {
-      list.classList.remove('open');
-      const r = sides[side].resort; if (r) input.value = r.name;
-    }, 150));
-    list.addEventListener('mousedown', e => { const li = e.target.closest('li[data-k]'); if (li) { e.preventDefault(); pick(+li.dataset.k); } });
+    document.addEventListener('pointerdown', e => { if (open() && !p.contains(e.target)) close(); });
+    list.addEventListener('click', e => { const li = e.target.closest('li[data-k]'); if (li) pick(+li.dataset.k); });
   });
   $('#swap').addEventListener('click', () => {
     const a = sides[0].resort?.id, b = sides[1].resort?.id;
@@ -130,6 +182,23 @@ function setupPickers() {
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function setupTools() {
+  $('#reset').addEventListener('click', () => {
+    settings.view = '3d';
+    document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('on', x.dataset.view === '3d'));
+    fitCamera();
+  });
+  $('#compass').addEventListener('click', () => animateAzimuth(0));
+  $('#zoomIn').addEventListener('click', () => zoomBy(0.7));
+  $('#zoomOut').addEventListener('click', () => zoomBy(1 / 0.7));
+  let collapsed = false;
+  collapsed = SMALL_SCREEN;
+  try { const v = localStorage.getItem('sc.collapsed'); if (v) collapsed = v === '1'; } catch {}
+  const applyCollapse = () => panels.forEach(p => { p.classList.toggle('collapsed', collapsed); $('.title', p).setAttribute('aria-expanded', String(!collapsed)); });
+  panels.forEach(p => $('.title', p).addEventListener('click', () => {
+    collapsed = !collapsed; applyCollapse();
+    try { localStorage.setItem('sc.collapsed', collapsed ? '1' : '0'); } catch {}
+  }));
+  applyCollapse();
   document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
     document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('on', x === b));
     settings.view = b.dataset.view; fitCamera();
@@ -301,7 +370,8 @@ function disposeTree(obj) {
 
 function buildSide(S, data, terrain, landcover, features) {
   for (const g of [S.root, S.flat]) for (const c of [...g.children]) { g.remove(c); disposeTree(c); }
-  S.labelLayer.innerHTML = ''; S.labels = []; S.trees = null; S.buildings = null; S.placedExag = null;
+  if (hover?.S === S) setHover(null);
+  S.labelLayer.innerHTML = ''; S.labels = []; S.liftList = []; S.trees = null; S.buildings = null; S.placedExag = null;
   const [cx, cy] = [(data.bbox[0] + data.bbox[2]) / 2, (data.bbox[1] + data.bbox[3]) / 2];
   const kx = EARTH_R * DEG * Math.cos(cy * DEG), ky = EARTH_R * DEG;
   const toX = lon => (lon - cx) * kx, toZ = lat => -(lat - cy) * ky;
@@ -420,17 +490,7 @@ function buildSide(S, data, terrain, landcover, features) {
   S.runsObj = makeLines(runPos, runCol, 2.2);
   S.root.add(S.runsObj);
 
-  const liftPos = [], liftCol = [];
-  const lc = new THREE.Color(LIFT_COLOR);
-  lineSets(data.lifts, (f, line) => {
-    for (let k = 0; k + 1 < line.length; k++) {
-      liftPos.push(...drape(line[k][0], line[k][1], 12), ...drape(line[k + 1][0], line[k + 1][1], 12));
-      liftCol.push(lc.r, lc.g, lc.b, lc.r, lc.g, lc.b);
-    }
-  });
-  S.liftsObj = makeLines(liftPos, liftCol, 2.6);
-  S.root.add(S.liftsObj);
-  buildLiftLabels(S, data, terrain);
+  buildLifts(S, data, terrain);
 
   if (data.boundary) {
     const bp = [], bc = [];
@@ -623,44 +683,187 @@ function placeBuildings(mesh, exag) {
   mesh.geometry.computeBoundingSphere();
 }
 
-// ---------- lift labels ----------
-const LIFT_ICONS = {
-  chair_lift: '🪑', gondola: '🚡', cable_car: '🚠', mixed_lift: '🪑🚡', funicular: '🚞', railway: '🚞',
-  't-bar': 'T-bar', 'j-bar': 'J-bar', platter: 'Platter', drag_lift: 'Drag lift', rope_tow: 'Rope tow', magic_carpet: 'Carpet',
+// ---------- lifts: icons, labels, hover ----------
+const SURFACE = new Set(['t-bar', 'j-bar', 'platter', 'drag_lift', 'rope_tow']);
+const LIFT_KIND = {
+  chair_lift: 'Chairlift', gondola: 'Gondola', cable_car: 'Cable car', mixed_lift: 'Chair/gondola combo', funicular: 'Funicular',
+  railway: 'Rack railway', 't-bar': 'T-bar', 'j-bar': 'J-bar', platter: 'Platter', drag_lift: 'Drag lift', rope_tow: 'Rope tow', magic_carpet: 'Magic carpet',
 };
-function liftLabel(f) {
-  const icon = LIFT_ICONS[f.k] || 'Lift';
-  let name = f.n;
-  if (name && name.includes(', ')) {  // "アルペンクワッドリフト, Alpen Quad" -> prefer the latin-script part
-    const latin = name.split(', ').filter(p => /^[\x00-\u024f\s'’.&()-]+$/.test(p));
+// 16x16 line icons, drawn with currentColor
+const ICON_PATHS = {
+  chair: '<path d="M1 3.5 15 1.5M9 2.6v4.4"/><path d="M5.5 7h6v3.2M5.5 7v5.5h6"/>',
+  gondola: '<path d="M1 3.5 15 1.5M8 2.5v2.5"/><rect x="4" y="5" width="8" height="8.5" rx="2"/><path d="M4 8.5h8"/>',
+  tram: '<path d="M1 2.5 15 1.5M1 4 15 3M8 3.3v2"/><rect x="2.5" y="5.3" width="11" height="8" rx="1.5"/><path d="M2.5 8.5h11"/>',
+  funicular: '<path d="M1 14 15 6"/><path d="M4 11.5 4 8l7-4 0 3.4z"/>',
+  surface: '<path d="M1 3.5 15 1.5M8 2.5v8M5 10.5h6"/>',
+  carpet: '<path d="M1 12.5 15 8.5"/><rect x="1.5" y="9" width="13" height="2.6" rx="1.3" transform="rotate(-16 8 10.3)"/>',
+  combo: '<path d="M1 3.5 15 1.5M5 3v2.5M11 2.2v3"/><path d="M2.5 5.5h4v3.5h-4"/><rect x="9" y="5.2" width="5" height="6" rx="1.2"/>',
+};
+const iconFor = k => k === 'chair_lift' ? 'chair' : k === 'gondola' ? 'gondola' : k === 'cable_car' ? 'tram'
+  : k === 'funicular' || k === 'railway' ? 'funicular' : k === 'magic_carpet' ? 'carpet' : k === 'mixed_lift' ? 'combo' : 'surface';
+const iconSvg = k => `<svg class="ico" viewBox="0 0 16 16" aria-hidden="true">${ICON_PATHS[iconFor(k)]}</svg>`;
+
+// Generic words that the icon already says. Removed only when something else is left.
+const LIFT_WORDS = /\b(chair ?lift|chair|lift|gondola|gondel(bahn)?|kabinenbahn|sessel(bahn|lift)|schlepp(lift)?|skilift|ski lift|t-?bar|tellerlift|télé(siège|cabine|ski|phérique)|tele(siege|cabine|ski)|seggiovia|cabinovia|sciovia|funivia|quad|triple|double|six[- ]?pack|detachable|high[- ]?speed|4er|6er|8er|2er|3er|kombibahn)\b/gi;
+function liftName(f) {
+  let name = f.n || '';
+  if (name.includes(', ')) {  // "アルペンクワッドリフト, Alpen Quad" -> the latin-script part
+    const latin = name.split(', ').filter(p => /^[\x00-ɏ\s'’.&()-]+$/.test(p));
     if (latin.length) name = latin[latin.length - 1];
   }
-  let seats = f.o && ['chair_lift', 'gondola', 'cable_car', 'mixed_lift'].includes(f.k) ? `${f.o} ` : '';
-  if (seats && name && new RegExp(`\\b${f.o}\\b`).test(name)) seats = '';  // "Skyline 2" already says it
-  f = { ...f, n: name };
-  const isWord = /^[A-Za-z]/.test(icon);
-  if (f.n && isWord && f.n.toLowerCase().includes(icon.toLowerCase().split('-')[0].split(' ')[0])) return `${f.n}${seats ? ' ' + seats.trim() : ''}`;
-  const kind = `${seats}${icon}`;
-  return f.n ? `${f.n} ${kind}` : kind;
+  const short = name.replace(LIFT_WORDS, ' ').replace(/\s*[-–]\s*$|^\s*[-–]\s*/g, '').replace(/\s{2,}/g, ' ').trim();
+  return { full: name, short: short.replace(/[^\p{L}]/gu, '').length >= 4 ? short : name };
+}
+function liftSeats(f) { return f.o && !SURFACE.has(f.k) && f.k !== 'magic_carpet' ? f.o : null; }
+
+function labelHtml(f) {
+  const { short } = liftName(f);
+  const seats = liftSeats(f);
+  const txt = short.length > 22 ? short.slice(0, 21).trimEnd() + '…' : short;
+  return `${iconSvg(f.k)}${seats ? `<b class="seat">${seats}</b>` : ''}${txt ? `<span>${esc(txt)}</span>` : ''}`;
 }
 
-function buildLiftLabels(S, data, terrain) {
+function liftInfo(L) {
+  const f = L.f, { full } = liftName(f), seats = liftSeats(f);
+  const kind = (f.dt && f.k === 'chair_lift' ? 'Express chair' : LIFT_KIND[f.k] || 'Lift') + (f.b ? ' with bubble' : '');
+  const line1 = [kind, seats ? `${seats} per ${f.k === 'chair_lift' ? 'chair' : 'cabin'}` : null].filter(Boolean).join(' · ');
+  const line2 = [`${(L.len / 1000).toFixed(L.len < 1000 ? 2 : 1)} km`, `${fmt(L.vert)} m vertical`,
+    f.cap ? `${fmt(f.cap)}/h` : null, f.dur ? `${Math.round(f.dur / 60)} min ride` : null].filter(Boolean).join(' · ');
+  return `<div class="t">${iconSvg(f.k)}${esc(full || 'Unnamed lift')}</div><div>${line1}</div><div class="m">${line2}</div>`;
+}
+
+function buildLifts(S, data, terrain) {
   const { toX, toZ } = S.project;
+  S.liftList = [];
+  const casing = [], casingCol = [], body = [], bodyCol = [], stations = [];
+  const lc = new THREE.Color(LIFT_COLOR), dark = new THREE.Color('#111418');
   for (const f of data.lifts) {
     const line = f.t === 'MultiLineString' ? f.c.flat() : f.c;
-    if (!line?.length) continue;
-    const a = line[0], b = line[line.length - 1];
-    const ha = terrain.sample(a[0], a[1]), hb = terrain.sample(b[0], b[1]);
-    const [lo, la, h] = ha > hb ? [a[0], a[1], ha] : [b[0], b[1], hb];
-    const len = Math.hypot(toX(a[0]) - toX(b[0]), toZ(a[1]) - toZ(b[1]));
+    if (!line?.length || line.length < 2) continue;
+    const pts = line.map(([lo, la]) => new THREE.Vector3(toX(lo), terrain.sample(lo, la) + 12, toZ(la)));
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const a = pts[k], b = pts[k + 1];
+      casing.push(a.x, a.y, a.z, b.x, b.y, b.z); casingCol.push(dark.r, dark.g, dark.b, dark.r, dark.g, dark.b);
+      body.push(a.x, a.y, a.z, b.x, b.y, b.z); bodyCol.push(lc.r, lc.g, lc.b, lc.r, lc.g, lc.b);
+    }
+    const first = pts[0], last = pts[pts.length - 1];
+    stations.push(first.x, first.y, first.z, last.x, last.y, last.z);
+    let len = 0; for (let k = 0; k + 1 < pts.length; k++) len += Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z);
+    const top = first.y > last.y ? first : last;
+    S.liftList.push({ f, pts, len, vert: Math.abs(first.y - last.y), top: top.clone().add(new THREE.Vector3(0, 10, 0)) });
+  }
+  const g = new THREE.Group();
+  const casingLines = makeLines(casing, casingCol, 5.2);
+  casingLines.material.depthWrite = false;  // let the bright core draw over its own casing
+  g.add(casingLines);
+  const bodyLines = makeLines(body, bodyCol, 2.4);
+  bodyLines.material.depthFunc = THREE.LessEqualDepth;
+  bodyLines.renderOrder = 3;
+  g.add(bodyLines);
+  if (stations.length) {
+    const sg = new THREE.BufferGeometry();
+    sg.setAttribute('position', new THREE.Float32BufferAttribute(stations, 3));
+    const pm = new THREE.PointsMaterial({ size: 7, sizeAttenuation: false, map: DOT_TEX, alphaTest: 0.5, transparent: true });
+    const pts = new THREE.Points(sg, pm); pts.renderOrder = 4;
+    g.add(pts);
+  }
+  S.liftsObj = g;
+  S.root.add(g);
+  // labels, longest lifts first so they win collisions
+  S.labels = S.liftList.slice().sort((a, b) => b.len - a.len).map(L => {
     const el = document.createElement('div');
     el.className = 'lift-label';
-    el.textContent = liftLabel(f);
-    el.title = `${f.n || 'Unnamed lift'} · ${(f.k || 'lift').replace(/_/g, ' ')}${f.o ? ` · ${f.o} per carrier` : ''} · ${Math.round(Math.abs(ha - hb))} m vertical`;
+    el.innerHTML = labelHtml(L.f);
+    el.addEventListener('pointerenter', () => setHover(S, L, null));
+    el.addEventListener('pointerleave', () => setHover(null));
     S.labelLayer.appendChild(el);
-    S.labels.push({ el, pos: new THREE.Vector3(toX(lo), h + 15, toZ(la)), len, w: 0, h: 0 });
+    L.el = el;
+    return { el, pos: L.top, w: 0, h: 0, L };
+  });
+}
+
+const DOT_TEX = (() => {
+  const c = document.createElement('canvas'); c.width = c.height = 32;
+  const x = c.getContext('2d');
+  x.fillStyle = '#111418'; x.beginPath(); x.arc(16, 16, 15, 0, 7); x.fill();
+  x.fillStyle = '#fff4c2'; x.beginPath(); x.arc(16, 16, 9, 0, 7); x.fill();
+  return new THREE.CanvasTexture(c);
+})();
+
+// hover: nearest lift to the pointer in screen space
+let hover = null;
+const tooltip = document.createElement('div');
+tooltip.className = 'lift-tip'; tooltip.hidden = true;
+stage.appendChild(tooltip);
+
+function setHover(S, L, at) {
+  if (hover && (!S || hover.L !== L)) {
+    hover.S.root.remove(hover.obj); disposeTree(hover.obj);
+    hover.L.el?.classList.remove('hot');
+    hover = null;
   }
-  S.labels.sort((p, q) => q.len - p.len);  // longest lifts win when labels collide
+  if (!S || !L) { tooltip.hidden = true; requestRender(); return; }
+  if (!hover) {
+    const p = [], c = [], col = new THREE.Color('#fff6b0');
+    for (let k = 0; k + 1 < L.pts.length; k++) { const a = L.pts[k], b = L.pts[k + 1]; p.push(a.x, a.y, a.z, b.x, b.y, b.z); c.push(col.r, col.g, col.b, col.r, col.g, col.b); }
+    const obj = makeLines(p, c, 6);
+    obj.material.depthTest = false; obj.renderOrder = 10;
+    S.root.add(obj);
+    L.el?.classList.add('hot');
+    hover = { S, L, obj };
+  }
+  tooltip.innerHTML = liftInfo(L);
+  tooltip.hidden = false;
+  const r = stage.getBoundingClientRect();
+  let x, y;
+  if (at) { x = at[0]; y = at[1]; } else {
+    _v.copy(L.top).applyMatrix4(S.root.matrixWorld).project(camera);
+    const [ox, oy] = viewOrigin(S.i);
+    x = ox + (_v.x + 1) / 2 * viewW; y = oy + (1 - _v.y) / 2 * viewH;
+  }
+  const tw = tooltip.offsetWidth, th = tooltip.offsetHeight;
+  tooltip.style.transform = `translate(${Math.round(Math.min(Math.max(4, x + 14), r.width - tw - 4))}px, ${Math.round(Math.min(Math.max(4, y + 14), r.height - th - 4))}px)`;
+  requestRender();
+}
+
+function viewOrigin(i) {  // top-left of side i's viewport in stage CSS pixels
+  return stacked ? [0, i === 0 ? 0 : stage.clientHeight - viewH] : [i === 0 ? 0 : stage.clientWidth - viewW, 0];
+}
+
+let hoverQueued = null;
+canvas.addEventListener('pointermove', e => {
+  if (e.buttons) { if (hover) setHover(null); return; }
+  hoverQueued = e;
+});
+canvas.addEventListener('pointerleave', () => setHover(null));
+function processHover() {
+  const e = hoverQueued; hoverQueued = null;
+  if (!e || !settings.lifts) return;
+  const r = stage.getBoundingClientRect();
+  const mx = e.clientX - r.left, my = e.clientY - r.top;
+  const i = stacked ? (my < viewH ? 0 : 1) : (mx < viewW ? 0 : 1);
+  const S = sides[i];
+  if (!S.liftList?.length) return setHover(null);
+  const [ox, oy] = viewOrigin(i);
+  S.root.updateMatrixWorld();
+  let best = null, bestD = 9;
+  const a2 = new THREE.Vector2(), b2 = new THREE.Vector2();
+  for (const L of S.liftList) {
+    let prev = null;
+    for (const p of L.pts) {
+      _v.copy(p).applyMatrix4(S.root.matrixWorld).project(camera);
+      const cur = _v.z < 1 ? b2.set(ox + (_v.x + 1) / 2 * viewW, oy + (1 - _v.y) / 2 * viewH) : null;
+      if (prev && cur) {
+        const dx = cur.x - prev.x, dy = cur.y - prev.y, l2 = dx * dx + dy * dy || 1;
+        const t = Math.max(0, Math.min(1, ((mx - prev.x) * dx + (my - prev.y) * dy) / l2));
+        const d = Math.hypot(prev.x + t * dx - mx, prev.y + t * dy - my);
+        if (d < bestD) { bestD = d; best = L; }
+      }
+      prev = cur ? a2.copy(cur) : null;
+    }
+  }
+  if (best) setHover(S, best, [mx, my]); else if (hover) setHover(null);
+  canvas.style.cursor = best ? 'pointer' : '';
 }
 
 const _v = new THREE.Vector3();
@@ -676,8 +879,8 @@ function updateLabels(S, ox, oy) {
     const x = (_v.x + 1) / 2 * viewW, y = (1 - _v.y) / 2 * viewH;
     if (_v.z > 1 || x < -50 || y < -20 || x > viewW + 50 || y > viewH + 20) { L.el.style.display = 'none'; continue; }
     if (!L.w) { L.el.style.display = ''; L.w = L.el.offsetWidth; L.h = L.el.offsetHeight; }
-    const r = [x - L.w / 2, y - L.h - 4, x + L.w / 2, y - 4];
-    if (placed.some(p => r[0] < p[2] && r[2] > p[0] && r[1] < p[3] && r[3] > p[1])) { L.el.style.display = 'none'; continue; }
+    const r = [x - L.w / 2, y - L.h - 3, x + L.w / 2, y - 3];
+    if (placed.some(p => r[0] < p[2] + 2 && r[2] + 2 > p[0] && r[1] < p[3] + 1 && r[3] + 1 > p[1])) { L.el.style.display = 'none'; continue; }
     placed.push(r);
     L.el.style.display = '';
     L.el.style.transform = `translate(${Math.round(ox + r[0])}px, ${Math.round(oy + r[1])}px)`;
@@ -748,7 +951,7 @@ function applyVertical() {
 const fmt = (v, d = 0) => v == null || !isFinite(v) ? '–' : v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 function renderPanel(side, r, S) {
   const p = panels[side];
-  $('.title', p).innerHTML = `${esc(r.name)}<small>${esc([r.region, r.countryName].filter(Boolean).join(', '))}</small>`;
+  $('.title', p).innerHTML = `<span class="chev" aria-hidden="true"></span>${esc(r.name)}<small>${esc([r.region, r.countryName].filter(Boolean).join(', '))}</small>`;
   const vert = r.top != null && r.base != null ? r.top - r.base : null;
   const rows = [
     ['Mapped runs', `${fmt(r.runKm)} km`],
@@ -772,7 +975,8 @@ function updateLegend() {
   const add = (c, label) => items.push(`<span><i style="background:${c}"></i>${label}</span>`);
   if (convs.has('europe') || convs.size === 0) { add(DIFF_COLORS.blue, 'Easy'); add(DIFF_COLORS.red, 'Intermediate'); }
   if (convs.has('north_america') || convs.has('japan')) { add(DIFF_COLORS.green, 'Green'); add(convs.has('japan') ? DIFF_COLORS.red : DIFF_COLORS.blue, 'Blue/red'); }
-  add(DIFF_COLORS.black, 'Black'); add(DIFF_COLORS.orange, 'Freeride'); add(LIFT_COLOR, 'Lift'); add(BOUNDARY_COLOR, 'Ski-area boundary');
+  add(DIFF_COLORS.black, 'Black'); add(DIFF_COLORS.orange, 'Freeride');
+  items.push(`<span><i style="background:${LIFT_COLOR};outline:2px solid #111418"></i>Lift</span>`); add(BOUNDARY_COLOR, 'Ski-area boundary');
   add('#3f5c42', 'Trees'); add('#8a8580', 'Roads'); add('#b4b2ae', 'Parking'); add('#a39586', 'Buildings');
   $('#legend').innerHTML = items.join('');
 }
@@ -783,13 +987,58 @@ function fitCamera() {
   const vfov = camera.fov * DEG;
   const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
   const d = (ext * 0.55) / Math.tan(Math.min(vfov, hfov) / 2);
-  const phi = { '3d': 58 * DEG, top: 0.0001, side: 86 * DEG }[settings.view];
+  const phi = { '3d': 58 * DEG, top: 0.0001 }[settings.view] ?? 58 * DEG;
   const dist = settings.view === '3d' ? d * 0.85 : d;
   controls.target.set(0, 0, 0);
   camera.position.set(0, dist * Math.cos(phi), dist * Math.sin(phi));
   camera.up.set(0, 1, 0);
   controls.update();
+  idle.since = performance.now(); idle.active = false;
   requestRender();
+}
+
+// ---------- idle rocking, compass, zoom ----------
+const reduceMotion = matchMedia('(prefers-reduced-motion: reduce)').matches;
+const idle = { since: performance.now(), active: false, baseAz: 0, t0: 0 };
+const markActive = () => { idle.since = performance.now(); if (idle.active) { idle.active = false; } };
+controls.addEventListener('start', markActive);
+canvas.addEventListener('wheel', markActive, { passive: true });
+canvas.addEventListener('pointerdown', markActive);
+window.addEventListener('keydown', markActive);
+const IDLE_MS = 4000, ROCK_AMP = 9 * DEG, ROCK_PERIOD = 14000;
+const _sph = new THREE.Spherical(), _off = new THREE.Vector3();
+function setAzimuth(az) {
+  _off.copy(camera.position).sub(controls.target);
+  _sph.setFromVector3(_off); _sph.theta = az;
+  camera.position.copy(controls.target).add(_off.setFromSpherical(_sph));
+  camera.lookAt(controls.target);
+}
+function rock(now) {
+  if (reduceMotion || settings.view === 'top' || document.hidden || !sides.every(S => S.extent)) return false;
+  if (now - idle.since < IDLE_MS) return false;
+  if (!idle.active) { idle.active = true; idle.baseAz = controls.getAzimuthalAngle(); idle.t0 = now; }
+  const t = now - idle.t0, ramp = Math.min(1, t / 4000);
+  setAzimuth(idle.baseAz + ROCK_AMP * ramp * Math.sin(2 * Math.PI * t / ROCK_PERIOD));
+  return true;
+}
+let compassAnim = null;
+function animateAzimuth(to) {
+  const from = controls.getAzimuthalAngle(), start = performance.now();
+  let d = to - from; d = Math.atan2(Math.sin(d), Math.cos(d));
+  compassAnim = now => {
+    const k = Math.min(1, (now - start) / 600), e = k < .5 ? 2 * k * k : 1 - (-2 * k + 2) ** 2 / 2;
+    setAzimuth(from + d * e);
+    if (k >= 1) compassAnim = null;
+  };
+  markActive();
+}
+function zoomBy(f) {
+  _off.copy(camera.position).sub(controls.target).multiplyScalar(f);
+  camera.position.copy(controls.target).add(_off);
+  markActive(); requestRender();
+}
+function updateCompass() {
+  $('#compass .needle').style.transform = `rotate(${controls.getAzimuthalAngle() / DEG}deg)`;
 }
 
 // ---------- render ----------
@@ -819,7 +1068,11 @@ function updateScaleBar() {
 
 function frame() {
   requestAnimationFrame(frame);
+  const now = performance.now();
+  if (compassAnim) { compassAnim(now); needRender = true; }
+  else if (rock(now)) needRender = true;
   if (controls.update()) needRender = true;
+  if (hoverQueued) processHover();
   if (!needRender) return;
   needRender = false;
   const dist = camera.position.distanceTo(controls.target);
@@ -835,6 +1088,7 @@ function frame() {
     updateLabels(S, x, H - y - viewH);
   });
   updateScaleBar();
+  updateCompass();
 }
 
 window.skiCompare = { camera, controls, sides, settings, requestRender }; // handy for debugging from the console

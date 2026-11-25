@@ -29,6 +29,7 @@ mkdir -p data/raw && cd data/raw
 for f in ski_areas runs lifts; do curl -O https://tiles.openskimap.org/geojson/$f.geojson; done
 cd ../..
 TOP_N=100000 python3 scripts/build_data.py data/raw docs/data   # resorts + index
+python3 scripts/enrich_index.py                                # continent, run count for search/sort
 python3 scripts/bake_landcover.py                              # ~10 min
 TOP_FEATURES=1000 python3 scripts/fetch_features.py            # hours; resumable
 python3 -m http.server -d docs 8000

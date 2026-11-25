@@ -1,9 +1,9 @@
 const { chromium } = require('playwright');
 (async () => {
   const [url, out, waitMs = '25000', w = '1500', h = '850'] = process.argv.slice(2);
-  const browser = await chromium.launch({ proxy: { server: 'http://127.0.0.1:38611', bypass: 'localhost,127.0.0.1' },
+  const browser = await chromium.launch({ proxy: { server: process.env.HTTPS_PROXY, bypass: 'localhost,127.0.0.1' },
     args: ['--use-gl=angle', '--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'] });
-  const page = await browser.newPage({ viewport: { width: +w, height: +h }, deviceScaleFactor: 1 });
+  const page = await browser.newPage({ viewport: { width: +w, height: +h }, deviceScaleFactor: 1, reducedMotion: process.env.MOTION ? 'no-preference' : 'reduce' });
   page.on('console', m => console.log('console:', m.type(), m.text()));
   page.on('pageerror', e => console.log('pageerror:', e.message));
   await page.goto(url);
