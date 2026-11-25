@@ -1182,6 +1182,13 @@ function elevIcon(aligned) {
   const r = sides.map(S => S.resort);
   const W = 32, H = 18, pad = 1;
   const lo = r.map(x => x?.base ?? 0), hi = r.map((x, i) => x?.top ?? lo[i] + 500);
+  if (!aligned) {
+    // keep the two clearly apart even when the resorts sit at similar heights: the higher one
+    // (by mid-elevation) is lifted until its base is at least a quarter of the drawing above the other's
+    const up = (lo[1] + hi[1]) / 2 > (lo[0] + hi[0]) / 2 ? 1 : 0, dn = 1 - up;
+    const range = Math.max(...hi) - Math.min(...lo), need = range * 0.3 - (lo[up] - lo[dn]);
+    if (need > 0) { lo[up] += need; hi[up] += need; }
+  }
   let y0 = Math.min(...lo), y1 = Math.max(...hi);
   if (aligned) { y0 = 0; y1 = Math.max(hi[0] - lo[0], hi[1] - lo[1]); }
   const sy = v => H - pad - (v - y0) / Math.max(1, y1 - y0) * (H - 2 * pad);
