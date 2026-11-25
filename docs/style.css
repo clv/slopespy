@@ -250,3 +250,15 @@ html.sheet-open, html.sheet-open body { overflow: hidden; overscroll-behavior: n
 .results li.reg { color: var(--muted); font-size: 12px; font-weight: 600; padding-top: 8px; padding-bottom: 2px; }
 .results li.reg span { font-weight: 400; opacity: .7; }
 @media (max-width: 760px) { .results li.node { min-height: 44px; } }
+
+/* single-resort mode */
+#stage.single .panel[data-side="1"], #stage.single .divider, #stage.single .loading[data-side="1"] { display: none; }
+#stage.single .loading[data-side="0"] { width: 100%; height: 100%; }
+header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
+#swap svg, #infoBtn svg, #reset svg { display: block; margin: 0 auto; }
+
+/* "show on the other side" button at the end of each search row */
+.results li[data-k] { align-items: center; }
+.results li .other { flex: none; margin: -6px -4px -6px 2px; width: 36px; align-self: stretch; display: grid; place-items: center; background: none; border: 0; border-left: 1px solid var(--line); color: var(--muted); cursor: pointer; border-radius: 0 6px 6px 0; }
+.results li .other:hover { background: #2a3a4a; color: var(--fg); }
+@media (max-width: 760px) { .results li .other { width: 46px; margin: -9px -12px -9px 4px; } }

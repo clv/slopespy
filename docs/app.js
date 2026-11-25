@@ -71,7 +71,7 @@ controls.dampingFactor = 0.12;
 controls.maxPolarAngle = Math.PI / 2 - 0.02;
 controls.addEventListener('change', requestRender);
 
-const settings = { exag: 2, absElev: false, runs: true, lifts: true, labels: true, trees: true, town: true, grid: true, view: '3d' };
+const settings = { mode: 'aligned', pairMode: 'aligned', exag: 2, absElev: false, runs: true, lifts: true, labels: true, trees: true, town: true, grid: true, view: '3d' };
 const lineMaterials = new Set();
 const gridUniform = { value: 1 };
 
@@ -142,7 +142,7 @@ function setupPickers() {
       const { r, head, val } = picker.items[k];
       if (head) html += `<li class="h1">${esc(head)}</li>`;
       const sub = [r.region, r.countryName || r.country].filter(Boolean).join(', ');
-      html += `<li role="option" data-k="${k}" class="${k === picker.act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n"><span class="nm">${esc(r.name)}</span> <span class="m">${esc(sub)}</span></span><span class="v">${val}</span></li>`;
+      html += `<li role="option" data-k="${k}" class="${k === picker.act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n"><span class="nm">${esc(r.name)}</span> <span class="m">${esc(sub)}</span></span><span class="v">${val}</span><button class="other" data-o="${k}" title="Show on the other side" aria-label="Show ${esc(r.name)} on the other side">${otherIcon()}</button></li>`;
     }
     return html;
   };
@@ -179,7 +179,7 @@ function setupPickers() {
   const km = r => `${fmt(r.runKm)} km of runs`;
   const row = (r, val, sub = [r.region, r.countryName || r.country].filter(Boolean).join(', ')) => {
     const k = picker.items.push({ r }) - 1;
-    return `<li role="option" data-k="${k}" class="${r.id === cur ? 'cur' : ''}"><span class="n"><span class="nm">${esc(r.name)}</span> <span class="m">${esc(sub)}</span></span><span class="v">${val}</span></li>`;
+    return `<li role="option" data-k="${k}" class="${r.id === cur ? 'cur' : ''}"><span class="n"><span class="nm">${esc(r.name)}</span> <span class="m">${esc(sub)}</span></span><span class="v">${val}</span><button class="other" data-o="${k}" title="Show on the other side" aria-label="Show ${esc(r.name)} on the other side">${otherIcon()}</button></li>`;
   };
   const renderTree = () => {
     groups ??= buildGroups();
@@ -232,8 +232,7 @@ function setupPickers() {
       }
       renderTree();
       list.scrollTop = 0;
-      const curLi = [...list.querySelectorAll('li.cur')].pop();
-      if (curLi && curLi.offsetTop + curLi.offsetHeight > list.clientHeight) reveal(curLi, true);   // else keep Nearby in view
+      // start at the top (Nearby); the tree is already open on the current resort
       return;
     }
     const hits = INDEX.filter(r => words.every(w => r._s.includes(w))).sort((a, b) => a.rank - b.rank);
@@ -278,6 +277,18 @@ function setupPickers() {
     if (!SMALL_SCREEN) input.focus();  // on phones, don't throw the keyboard up over the list
   };
   const pick = k => { const r = picker.items[k]?.r; if (!r) return; close(); selectResort(picker.side, r.id); };
+  // the small button at the end of each row puts that resort on the other side instead
+  const pickOther = k => {
+    const r = picker.items[k]?.r; if (!r) return;
+    close();
+    if (settings.mode === 'single') setMode(settings.pairMode || 'aligned');
+    selectResort(1 - picker.side, r.id);
+  };
+  const otherIcon = () => {
+    const o = 1 - picker.side, col = o ? 'var(--b)' : 'var(--a)', st = stacked;
+    const a = st ? 'x="2" y="1" width="14" height="5.5"' : 'x="1" y="2" width="7" height="12"', b = st ? 'x="2" y="7.5" width="14" height="5.5"' : 'x="10" y="2" width="7" height="12"';
+    return `<svg viewBox="0 0 18 16" width="18" height="16" aria-hidden="true"><rect ${o ? a : b} rx="1.5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect ${o ? b : a} rx="1.5" fill="${col}"/></svg>`;
+  };
   input.addEventListener('input', render);
   input.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
@@ -291,7 +302,11 @@ function setupPickers() {
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); closeAbout(); } });
   sheet.addEventListener('click', e => { if (e.target === sheet) close(); });
   $('#pickClose').addEventListener('click', close);
-  list.addEventListener('click', e => { const li = e.target.closest('li[data-k]'); if (li) pick(+li.dataset.k); });
+  list.addEventListener('click', e => {
+    const o = e.target.closest('button.other');
+    if (o) { e.stopPropagation(); pickOther(+o.dataset.o); return; }
+    const li = e.target.closest('li[data-k]'); if (li) pick(+li.dataset.k);
+  });
   panels.forEach((p, i) => $('.pick', p).addEventListener('click', () => openPicker(i)));
   $('#swap').addEventListener('click', () => {
     const a = sides[0].resort?.id, b = sides[1].resort?.id;
@@ -322,14 +337,12 @@ function setupTools() {
     try { localStorage.setItem('sc.collapsed', collapsed ? '1' : '0'); } catch {}
   }));
   applyCollapse();
-  const setElev = abs => {
-    settings.absElev = abs;
-    $('#elevAligned').classList.toggle('on', !abs); $('#elevAligned').setAttribute('aria-checked', String(!abs));
-    $('#elevTrue').classList.toggle('on', abs); $('#elevTrue').setAttribute('aria-checked', String(abs));
-    applyVertical();
-  };
-  $('#elevAligned').addEventListener('click', () => setElev(false));
-  $('#elevTrue').addEventListener('click', () => setElev(true));
+  $('#elevSingle').addEventListener('click', () => setMode('single'));
+  $('#elevAligned').addEventListener('click', () => setMode('aligned'));
+  $('#elevTrue').addEventListener('click', () => setMode('true'));
+  let saved = 'aligned';
+  try { saved = localStorage.getItem('sc.mode') || 'aligned'; } catch {}
+  setMode(['single', 'aligned', 'true'].includes(saved) ? saved : 'aligned', false);
   updateElevIcons();
   window.addEventListener('resize', resize);
   updateLegend();
@@ -1136,7 +1149,7 @@ function processHover() {
   if (!e || !settings.lifts) return;
   const r = stage.getBoundingClientRect();
   const mx = e.clientX - r.left, my = e.clientY - r.top;
-  const i = stacked ? (my < viewH ? 0 : 1) : (mx < viewW ? 0 : 1);
+  const i = settings.mode === 'single' ? 0 : stacked ? (my < viewH ? 0 : 1) : (mx < viewW ? 0 : 1);
   const S = sides[i];
   if (!S.liftList?.length) return setHover(null);
   const [ox, oy] = viewOrigin(i);
@@ -1250,6 +1263,23 @@ function renderPanel(side, r, S) {
 
 // The two elevation icons: each resort as a little peak, its height its vertical.
 // "Side by side" stands both on the same baseline; "true elevation" draws them at their real heights.
+// View mode: 'single' (just the first resort, full width), 'aligned' (side by side, each centred
+// on its own height) or 'true' (side by side at real elevations). Remembered across visits.
+function setMode(mode, refit = true) {
+  const was = settings.mode;
+  settings.mode = mode;
+  if (mode !== 'single') settings.pairMode = mode;
+  settings.absElev = mode === 'true';
+  for (const [id, m] of [['#elevSingle', 'single'], ['#elevAligned', 'aligned'], ['#elevTrue', 'true']]) {
+    $(id).classList.toggle('on', mode === m); $(id).setAttribute('aria-checked', String(mode === m));
+  }
+  stage.classList.toggle('single', mode === 'single');
+  try { localStorage.setItem('sc.mode', mode); } catch {}
+  resize();
+  applyVertical();
+  if (refit && (was === 'single') !== (mode === 'single')) fitCamera();
+}
+
 // The mountain shapes from the logo, in units of peak height (peak at 0,0, base at y = 1).
 const ICON_PEAKS = [
   { body: [[-19, 34], [0, 0], [9, 14], [13.5, 7], [35, 34]], snow: [[0, 0], [-5.4, 9.5], [-1.7, 7.6], [.5, 10.4], [3.3, 7.6], [5.2, 8.6]], h: 34, fill: '#4fa3ff' },
@@ -1279,8 +1309,14 @@ function elevIcon(aligned) {
   const base = aligned ? `<path d="M1 ${H - pad + .4} H${W - 1}" stroke="currentColor" stroke-width="1" opacity=".5"/>` : '';
   return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><defs><clipPath id="ic${+aligned}"><rect width="${W}" height="${H}"/></clipPath></defs><g clip-path="url(#ic${+aligned})">${mountain(0, 11)}${mountain(1, 21)}</g>${base}</svg>`;
 }
+function singleIcon() {
+  const W = 22, H = 18, P = ICON_PEAKS[0], k = 15.5 / P.h, cx = 9.5, yt = 1.5;
+  const pts = a => a.map(([x, y]) => `${(cx + x * k).toFixed(1)},${(yt + y * k).toFixed(1)}`).join(' ');
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><polygon points="${pts(P.body)}" fill="${P.fill}"/><polygon points="${pts(P.snow)}" fill="#fff"/></svg>`;
+}
 function updateElevIcons() {
   const A = sides[0].resort, B = sides[1].resort;
+  $('#elevSingle').innerHTML = singleIcon() + '<span class="sr">Single resort</span>';
   $('#elevAligned').innerHTML = elevIcon(true) + '<span class="sr">Side by side</span>';
   $('#elevTrue').innerHTML = elevIcon(false) + '<span class="sr">True elevation</span>';
   if (A && B) $('#elevTrue').title = `True elevation: ${A.name} ${fmt(A.base)}–${fmt(A.top)} m, ${B.name} ${fmt(B.base)}–${fmt(B.top)} m`;
@@ -1300,7 +1336,7 @@ function updateLegend() {
 
 // ---------- camera ----------
 function fitCamera() {
-  const ext = Math.max(...sides.map(S => S.extent || 0), 2000);
+  const ext = Math.max(...(settings.mode === 'single' ? sides.slice(0, 1) : sides).map(S => S.extent || 0), 2000);
   const vfov = camera.fov * DEG;
   const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
   const d = (ext * 0.55) / Math.tan(Math.min(vfov, hfov) / 2);
@@ -1363,9 +1399,10 @@ let viewW = 1, viewH = 1, needRender = true, stacked = false;
 function resize() {
   const w = stage.clientWidth, h = stage.clientHeight;
   renderer.setSize(w, h, false);
-  stacked = w < h * 0.9;  // portrait screens: one resort above the other
+  const single = settings.mode === 'single';
+  stacked = !single && w < h * 0.9;  // portrait screens: one resort above the other
   stage.classList.toggle('stacked', stacked);
-  if (stacked) { viewW = w; viewH = Math.floor(h / 2); } else { viewW = Math.floor(w / 2); viewH = h; }
+  if (single) { viewW = w; viewH = h; } else if (stacked) { viewW = w; viewH = Math.floor(h / 2); } else { viewW = Math.floor(w / 2); viewH = h; }
   camera.aspect = viewW / viewH;
   camera.updateProjectionMatrix();
   lineMaterials.forEach(m => m.resolution.set(viewW, viewH));
@@ -1397,6 +1434,7 @@ function frame() {
   camera.updateProjectionMatrix();
   const W = stage.clientWidth, H = stage.clientHeight;
   sides.forEach((S, i) => {
+    if (i === 1 && settings.mode === 'single') return;
     const x = stacked || i === 0 ? 0 : W - viewW;
     const y = !stacked || i === 1 ? 0 : H - viewH;
     renderer.setViewport(x, y, viewW, viewH);
