@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ski Resort Scale Compare</title>
+<meta name="description" content="Compare ski resorts side by side as scale-correct 3D terrain models, from OpenStreetMap and open elevation data.">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }
+</script>
+</head>
+<body>
+<header>
+  <h1>Ski Resort Scale Compare</h1>
+  <div class="pickers">
+    <div class="picker" data-side="0">
+      <span class="swatch a"></span>
+      <input type="search" placeholder="Search resorts…" autocomplete="off" spellcheck="false" aria-label="Left resort">
+      <ul class="results" role="listbox"></ul>
+    </div>
+    <button id="swap" title="Swap resorts" aria-label="Swap resorts">⇄</button>
+    <div class="picker" data-side="1">
+      <span class="swatch b"></span>
+      <input type="search" placeholder="Search resorts…" autocomplete="off" spellcheck="false" aria-label="Right resort">
+      <ul class="results" role="listbox"></ul>
+    </div>
+  </div>
+  <div class="tools">
+    <div class="seg" role="group" aria-label="View">
+      <button data-view="3d" class="on">3D</button>
+      <button data-view="top">Top</button>
+      <button data-view="side">Side</button>
+    </div>
+    <label class="slider" title="Vertical exaggeration of the terrain. 1× is true scale; trees and buildings always stay at true height.">Vertical <input type="range" id="exag" min="1" max="5" step="0.25" value="3"><output id="exagOut">3×</output></label>
+    <label><input type="checkbox" id="absElev"> True elevation</label>
+    <label><input type="checkbox" id="showRuns" checked> Runs</label>
+    <label><input type="checkbox" id="showLifts" checked> Lifts</label>
+    <label><input type="checkbox" id="showLabels" checked> Lift names</label>
+    <label><input type="checkbox" id="showTrees" checked> Trees</label>
+    <label><input type="checkbox" id="showTown" checked> Buildings</label>
+    <label><input type="checkbox" id="showGrid" checked> 1 km grid</label>
+  </div>
+</header>
+<main id="stage">
+  <canvas id="c"></canvas>
+  <div class="labels" data-side="0"></div>
+  <div class="labels" data-side="1"></div>
+  <div class="divider"></div>
+  <section class="panel" data-side="0"><div class="title"></div><dl class="stats"></dl><div class="status"></div></section>
+  <section class="panel" data-side="1"><div class="title"></div><dl class="stats"></dl><div class="status"></div></section>
+  <div id="scalebar"><div class="bar"></div><span></span></div>
+  <div id="legend"></div>
+  <div id="hint">Drag to orbit · right-drag / two fingers to pan · scroll to zoom. Both sides share one camera, so they are always at the same scale.</div>
+</main>
+<footer>
+  Ski data © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL), via <a href="https://openskimap.org" target="_blank" rel="noopener">OpenSkiMap</a>.
+  Terrain: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a> (SRTM, USGS 3DEP, Copernicus and others; see <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener">attribution</a>).
+  Land cover: <a href="https://esa-worldcover.org" target="_blank" rel="noopener">© ESA WorldCover project 2021</a> (CC BY 4.0). Buildings, roads, parking: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps</a> (ODbL).
+</footer>
+<script type="module" src="app.js"></script>
+</body>
+</html>
