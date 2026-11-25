@@ -112,7 +112,7 @@ directory = f'''<!doctype html>
 <title>All {len(index):,} ski resorts · Slope Spy</title>
 <meta name="description" content="Every ski resort on Slope Spy, by continent and country. Open any one as a scale-correct 3D model and compare it side by side with another.">
 <link rel="canonical" href="{SITE}/resorts">
-<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="icon" href="favicon.svg?v=2" type="image/svg+xml">
 <style>
   :root {{ color-scheme: dark; --fg: #e8edf2; --muted: #93a1ae; --a: #4fa3ff; --line: #2a333d; }}
   body {{ margin: 0; background: #0f1419; color: var(--fg); font: 14px/1.5 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif; }}
