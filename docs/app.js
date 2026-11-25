@@ -106,12 +106,25 @@ async function init() {
   let saved = [];
   try { saved = JSON.parse(localStorage.getItem('sc.pair') || '[]'); } catch {}
   if (!a && !b && byId.has(saved[0]) && byId.has(saved[1])) [a, b] = saved;
+  else if (a && !b && byId.has(saved[1])) b = saved[1];   // /<resort> alone (e.g. a single-view link): keep the last partner
   a = a || 'big-sky';
   b = b && b !== a ? b : (a === 'sugar-bowl' ? 'big-sky' : 'sugar-bowl');
-  window.addEventListener('hashchange', () => {
-    const { b } = parseUrl();
+  // "Compare X with Y" links in the About dialog: in single view, go back to side by side so Y shows
+  document.getElementById('aboutResort')?.addEventListener('click', e => {
+    if (e.target.closest('a[href^="#"]') && settings.mode === 'single') setMode(settings.pairMode || 'aligned');
+  });
+  // back/forward, an edited fragment or a nearby-resort link: load whatever the URL now names
+  window.addEventListener('popstate', () => {
+    const { a, b } = parseUrl();
     window.closeAbout?.();
-    if (b && b !== sides[1].resort?.id) selectResort(1, b);
+    const st = history.state;   // our own entries remember both resorts, even when the URL shows one
+    const A = a || st?.a || sides[0].resort?.id;
+    let B = b || (st?.a === A ? st.b : null) || sides[1].resort?.id;
+    if (B === A) B = sides[1].resort?.id !== A ? sides[1].resort?.id : nearestResorts(byId.get(A), 1)[0][0].id;
+    urlPair = `${A}#${B}`;   // already in history: don't push it again
+    if (A !== sides[0].resort?.id) selectResort(0, A);
+    if (B !== sides[1].resort?.id) selectResort(1, B);
+    if (!b && a && settings.mode !== 'single') updateHash();
   });
   resize();
   await Promise.all([selectResort(0, a, false), selectResort(1, b, false)]);
@@ -397,11 +410,26 @@ function parseUrl() {
   else b = frag;
   return { a, b: byId.has(b) ? b : null };
 }
+// Address bar: /<left>#<right>, or just /<resort> in single view. A new pair of resorts gets its own history
+// entry (so Back returns to the previous pair); the mode, or both halves of a swap, only replace it.
+let urlPair = null, urlTimer = 0;
+function writeUrl() {
+  const A = sides[0].resort, B = sides[1].resort;
+  if (!A || !B) return;
+  const pair = `${A.id}#${B.id}`;
+  const url = BASE + (settings.mode === 'single' ? A.id : pair);
+  if (url !== location.pathname + location.hash) {
+    if (urlPair && pair !== urlPair) history.pushState({ a: A.id, b: B.id }, '', url);
+    else history.replaceState({ a: A.id, b: B.id }, '', url);
+  } else if (history.state?.a !== A.id || history.state?.b !== B.id) history.replaceState({ a: A.id, b: B.id }, '', url);
+  urlPair = pair;
+}
 function updateHash() {
   const A = sides[0].resort, B = sides[1].resort;
   if (!A || !B) return;
-  history.replaceState(null, '', `${BASE}${A.id}#${B.id}`);
-  document.title = `${A.name} vs ${B.name} · Slope Spy`;
+  clearTimeout(urlTimer);
+  urlTimer = setTimeout(writeUrl, 0);
+  document.title = settings.mode === 'single' ? `${A.name} in 3D · Slope Spy` : `${A.name} vs ${B.name} · Slope Spy`;
   try { localStorage.setItem('sc.pair', JSON.stringify([A.id, B.id])); } catch {}
   renderAboutResort(A);
   updateElevIcons();
@@ -1275,6 +1303,7 @@ function setMode(mode, refit = true) {
   }
   stage.classList.toggle('single', mode === 'single');
   try { localStorage.setItem('sc.mode', mode); } catch {}
+  updateHash();
   resize();
   applyVertical();
   if (refit && (was === 'single') !== (mode === 'single')) fitCamera();
