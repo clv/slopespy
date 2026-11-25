@@ -87,7 +87,7 @@ async function init() {
   fitCamera();
 }
 
-// ---------- search pickers ----------
+// ---------- resort picker (one sheet, opened from either resort card) ----------
 const SORTS = {
   region: { label: 'Continent › country', get: null },
   name:   { label: 'Name (A–Z)', get: r => r.name, asc: true },
@@ -116,103 +116,95 @@ function sortedIndex(items) {
   });
 }
 
+const picker = { side: 0, items: [], act: 0 };
 function setupPickers() {
-  const pickers = [...document.querySelectorAll('.picker')];
-  pickers.forEach(p => {
-    const side = +p.dataset.side;
-    const input = $('input', p), pop = $('.pop', p), list = $('.results', p), sortSel = $('.sort', p), count = $('.count', p);
-    sortSel.innerHTML = Object.entries(SORTS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
-    let items = [], act = 0;
-    const open = () => p.classList.contains('open');
-    const render = (scrollToCurrent) => {
-      sortSel.value = sortKey;
-      const q = norm(input.value.trim());
-      const words = q.split(/\s+/).filter(Boolean);
-      items = sortedIndex(INDEX.filter(r => words.every(w => r._s.includes(w))));
-      const cur = sides[side].resort?.id;
-      const metric = SORTS[sortKey].fmt ? SORTS[sortKey] : SORTS.runKm;
-      let html = '', lastC = null, lastK = null;
-      act = Math.max(0, scrollToCurrent ? items.findIndex(r => r.id === cur) : 0);
-      items.forEach((r, k) => {
-        if (sortKey === 'region') {
-          if (r.cont !== lastC) { html += `<li class="h1">${esc(r.cont)}</li>`; lastC = r.cont; lastK = null; }
-          const cn = r.countryName || r.country || '—';
-          if (cn !== lastK) { html += `<li class="h2">${esc(cn)}</li>`; lastK = cn; }
-        }
-        const sub = sortKey === 'region' ? (r.region || '') : (r.countryName || r.country || '');
-        const val = metric.get(r);
-        html += `<li role="option" data-k="${k}" class="${k === act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n">${esc(r.name)} <span class="m">${esc(sub)}</span></span><span class="v">${val == null ? '–' : metric.fmt(val)}</span></li>`;
-      });
-      list.innerHTML = html || '<li class="h2">No resorts match</li>';
-      count.textContent = `${fmt(items.length)} resort${items.length === 1 ? '' : 's'}`;
-      list.querySelector('li.act')?.scrollIntoView({ block: scrollToCurrent ? 'center' : 'nearest' });
-    };
-    const close = () => { p.classList.remove('open'); input.value = sides[side].resort?.name || ''; };
-    const openPop = () => {
-      if (open()) return;
-      pickers.forEach(o => o !== p && o.classList.contains('open') && o.querySelector('input').blur());
-      p.classList.add('open');
-      input.placeholder = sides[side].resort?.name || 'Search resorts…';
-      input.value = '';
-      render(true);
-    };
-    const pick = k => { const r = items[k]; if (!r) return; close(); input.blur(); selectResort(side, r.id); };
-    input.addEventListener('focus', openPop);
-    input.addEventListener('click', openPop);
-    input.addEventListener('input', () => render(false));
-    sortSel.addEventListener('change', () => { sortKey = sortSel.value; try { localStorage.setItem('sc.sort', sortKey); } catch {} render(true); input.focus(); });
-    input.addEventListener('keydown', e => {
-      const opts = [...list.querySelectorAll('li[data-k]')];
-      if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
-        e.preventDefault();
-        act = Math.max(0, Math.min(items.length - 1, act + (e.key === 'ArrowDown' ? 1 : -1)));
-        opts.forEach(li => li.classList.toggle('act', +li.dataset.k === act));
-        list.querySelector('li.act')?.scrollIntoView({ block: 'nearest' });
-      } else if (e.key === 'Enter') { e.preventDefault(); pick(act); }
-      else if (e.key === 'Escape') { close(); input.blur(); }
+  const sheet = $('#picker'), input = $('#q'), list = $('.results', sheet), sortSel = $('#sort'), count = $('.count', sheet);
+  sortSel.innerHTML = Object.entries(SORTS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  const render = scrollToCurrent => {
+    sortSel.value = sortKey;
+    const q = norm(input.value.trim());
+    const words = q.split(/\s+/).filter(Boolean);
+    const items = picker.items = sortedIndex(INDEX.filter(r => words.every(w => r._s.includes(w))));
+    const cur = sides[picker.side].resort?.id;
+    const metric = SORTS[sortKey].fmt ? SORTS[sortKey] : SORTS.runKm;
+    let html = '', lastC = null, lastK = null;
+    picker.act = Math.max(0, scrollToCurrent ? items.findIndex(r => r.id === cur) : 0);
+    items.forEach((r, k) => {
+      if (sortKey === 'region') {
+        if (r.cont !== lastC) { html += `<li class="h1">${esc(r.cont)}</li>`; lastC = r.cont; lastK = null; }
+        const cn = r.countryName || r.country || '—';
+        if (cn !== lastK) { html += `<li class="h2">${esc(cn)}</li>`; lastK = cn; }
+      }
+      const sub = sortKey === 'region' ? (r.region || '') : (r.countryName || r.country || '');
+      const val = metric.get(r);
+      html += `<li role="option" data-k="${k}" class="${k === picker.act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n">${esc(r.name)} <span class="m">${esc(sub)}</span></span><span class="v">${val == null ? '–' : metric.fmt(val)}</span></li>`;
     });
-    document.addEventListener('pointerdown', e => { if (open() && !p.contains(e.target)) close(); });
-    list.addEventListener('click', e => { const li = e.target.closest('li[data-k]'); if (li) pick(+li.dataset.k); });
+    list.innerHTML = html || '<li class="h2">No resorts match</li>';
+    count.textContent = `${fmt(items.length)} resort${items.length === 1 ? '' : 's'}`;
+    const a = list.querySelector('li.act');
+    if (a) a.scrollIntoView({ block: scrollToCurrent ? 'center' : 'nearest' }); else list.scrollTop = 0;
+  };
+  const close = () => { sheet.hidden = true; document.body.classList.remove('sheet-open'); };
+  window.openPicker = side => {
+    picker.side = side;
+    sheet.dataset.side = side;
+    sheet.hidden = false;
+    document.body.classList.add('sheet-open');
+    input.value = '';
+    input.placeholder = `${sides[side].resort?.name ? `Replace ${sides[side].resort.name}…` : 'Search 4,000+ resorts…'}`;
+    render(true);
+    if (!SMALL_SCREEN) input.focus();  // on phones, don't throw the keyboard up over the list
+  };
+  const pick = k => { const r = picker.items[k]; if (!r) return; close(); selectResort(picker.side, r.id); };
+  input.addEventListener('input', () => render(false));
+  sortSel.addEventListener('change', () => { sortKey = sortSel.value; try { localStorage.setItem('sc.sort', sortKey); } catch {} render(true); });
+  input.addEventListener('keydown', e => {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault();
+      picker.act = Math.max(0, Math.min(picker.items.length - 1, picker.act + (e.key === 'ArrowDown' ? 1 : -1)));
+      list.querySelectorAll('li[data-k]').forEach(li => li.classList.toggle('act', +li.dataset.k === picker.act));
+      list.querySelector('li.act')?.scrollIntoView({ block: 'nearest' });
+    } else if (e.key === 'Enter') { e.preventDefault(); pick(picker.act); }
   });
+  document.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); closeAbout(); } });
+  sheet.addEventListener('click', e => { if (e.target === sheet) close(); });
+  $('#pickClose').addEventListener('click', close);
+  list.addEventListener('click', e => { const li = e.target.closest('li[data-k]'); if (li) pick(+li.dataset.k); });
+  panels.forEach((p, i) => $('.pick', p).addEventListener('click', () => openPicker(i)));
   $('#swap').addEventListener('click', () => {
     const a = sides[0].resort?.id, b = sides[1].resort?.id;
     if (a && b) Promise.all([selectResort(0, b, false), selectResort(1, a, false)]).then(fitCamera);
   });
+  // about / credits
+  const about = $('#about');
+  window.closeAbout = () => { about.hidden = true; };
+  const openAbout = () => { about.hidden = false; $('#aboutClose').focus(); };
+  $('#infoBtn').addEventListener('click', openAbout);
+  $('#credit').addEventListener('click', openAbout);
+  $('#aboutClose').addEventListener('click', closeAbout);
+  about.addEventListener('click', e => { if (e.target === about) closeAbout(); });
 }
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 
 function setupTools() {
-  $('#reset').addEventListener('click', () => {
-    settings.view = '3d';
-    document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('on', x.dataset.view === '3d'));
-    fitCamera();
-  });
+  $('#reset').addEventListener('click', () => { settings.view = '3d'; fitCamera(); });
   $('#compass').addEventListener('click', () => animateAzimuth(0));
   $('#zoomIn').addEventListener('click', () => zoomBy(0.7));
   $('#zoomOut').addEventListener('click', () => zoomBy(1 / 0.7));
   let collapsed = false;
   collapsed = SMALL_SCREEN;
   try { const v = localStorage.getItem('sc.collapsed'); if (v) collapsed = v === '1'; } catch {}
-  const applyCollapse = () => panels.forEach(p => { p.classList.toggle('collapsed', collapsed); $('.title', p).setAttribute('aria-expanded', String(!collapsed)); });
-  panels.forEach(p => $('.title', p).addEventListener('click', () => {
+  const applyCollapse = () => panels.forEach(p => { p.classList.toggle('collapsed', collapsed); $('.collapse', p).setAttribute('aria-expanded', String(!collapsed)); });
+  panels.forEach(p => $('.collapse', p).addEventListener('click', () => {
     collapsed = !collapsed; applyCollapse();
     try { localStorage.setItem('sc.collapsed', collapsed ? '1' : '0'); } catch {}
   }));
   applyCollapse();
-  document.querySelectorAll('.seg button').forEach(b => b.addEventListener('click', () => {
-    document.querySelectorAll('.seg button').forEach(x => x.classList.toggle('on', x === b));
-    settings.view = b.dataset.view; fitCamera();
-  }));
   const exag = $('#exag'), exagOut = $('#exagOut');
   exag.value = settings.exag; exagOut.textContent = `${settings.exag}×`;
   exag.addEventListener('input', e => { settings.exag = +e.target.value; exagOut.textContent = `${settings.exag}×`; applyVertical(); });
   $('#showLabels').addEventListener('change', e => { settings.labels = e.target.checked; requestRender(); });
-  $('#showTrees').addEventListener('change', e => { settings.trees = e.target.checked; applyVisibility(); });
-  $('#showTown').addEventListener('change', e => { settings.town = e.target.checked; applyVisibility(); });
   $('#absElev').addEventListener('change', e => { settings.absElev = e.target.checked; applyVertical(); });
-  $('#showRuns').addEventListener('change', e => { settings.runs = e.target.checked; applyVisibility(); });
-  $('#showLifts').addEventListener('change', e => { settings.lifts = e.target.checked; applyVisibility(); });
-  $('#showGrid').addEventListener('change', e => { settings.grid = e.target.checked; gridUniform.value = +settings.grid; requestRender(); });
   window.addEventListener('resize', resize);
   updateLegend();
 }
@@ -223,7 +215,6 @@ async function selectResort(side, id, refit = true) {
   const meta = byId.get(id);
   if (!meta) return;
   const token = ++S.token;
-  $(`.picker[data-side="${side}"] input`).value = meta.name;
   S.resort = meta;
   renderPanel(side, meta, null);
   setStatus(side, 'Loading resort data…');
@@ -750,7 +741,13 @@ function buildLifts(S, data, terrain) {
     stations.push(first.x, first.y, first.z, last.x, last.y, last.z);
     let len = 0; for (let k = 0; k + 1 < pts.length; k++) len += Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z);
     const top = first.y > last.y ? first : last;
-    S.liftList.push({ f, pts, len, vert: Math.abs(first.y - last.y), top: top.clone().add(new THREE.Vector3(0, 10, 0)) });
+    let mid = first, acc = 0;
+    for (let k = 0; k + 1 < pts.length; k++) {
+      const d = Math.hypot(pts[k + 1].x - pts[k].x, pts[k + 1].z - pts[k].z);
+      if (acc + d >= len / 2) { mid = pts[k].clone().lerp(pts[k + 1], d ? (len / 2 - acc) / d : 0); break; }
+      acc += d;
+    }
+    S.liftList.push({ f, pts, len, vert: Math.abs(first.y - last.y), top: top.clone().add(new THREE.Vector3(0, 10, 0)), mid });
   }
   const g = new THREE.Group();
   const casingLines = makeLines(casing, casingCol, 5.2);
@@ -778,7 +775,7 @@ function buildLifts(S, data, terrain) {
     el.addEventListener('pointerleave', () => setHover(null));
     S.labelLayer.appendChild(el);
     L.el = el;
-    return { el, pos: L.top, w: 0, h: 0, L };
+    return { el, mid: L.mid, w: 0, h: 0, L };
   });
 }
 
@@ -866,24 +863,53 @@ function processHover() {
   canvas.style.cursor = best ? 'pointer' : '';
 }
 
-const _v = new THREE.Vector3();
+const _v = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3();
+function toScreen(v, out) {
+  out.copy(v).applyMatrix4(_mw).project(camera);
+  return out.z <= 1 ? [(out.x + 1) / 2 * viewW, (1 - out.y) / 2 * viewH] : null;
+}
+const _mw = new THREE.Matrix4();
+// do two convex polygons (4 corners each) overlap? separating-axis test
+function obbHit(p, q) {
+  for (const poly of [p, q]) {
+    for (let i = 0; i < 4; i++) {
+      const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % 4], nx = y1 - y2, ny = x2 - x1;
+      let pmin = Infinity, pmax = -Infinity, qmin = Infinity, qmax = -Infinity;
+      for (const [x, y] of p) { const d = x * nx + y * ny; pmin = Math.min(pmin, d); pmax = Math.max(pmax, d); }
+      for (const [x, y] of q) { const d = x * nx + y * ny; qmin = Math.min(qmin, d); qmax = Math.max(qmax, d); }
+      if (pmax < qmin || qmax < pmin) return false;
+    }
+  }
+  return true;
+}
+// Lift names are written along the lift line, just above it, and only where the line is long enough on screen.
 function updateLabels(S, ox, oy) {
   if (!S.labels.length) return;
   const show = settings.lifts && settings.labels;
   S.labelLayer.style.display = show ? '' : 'none';
   if (!show) return;
   S.root.updateMatrixWorld();
+  _mw.copy(S.root.matrixWorld);
   const placed = [];
   for (const L of S.labels) {
-    _v.copy(L.pos).applyMatrix4(S.root.matrixWorld).project(camera);
-    const x = (_v.x + 1) / 2 * viewW, y = (1 - _v.y) / 2 * viewH;
-    if (_v.z > 1 || x < -50 || y < -20 || x > viewW + 50 || y > viewH + 20) { L.el.style.display = 'none'; continue; }
+    const P = L.L.pts, a = toScreen(P[0], _a), b = toScreen(P[P.length - 1], _b), m = toScreen(L.mid, _v);
+    const hide = () => { L.el.style.display = 'none'; };
+    if (!a || !b || !m) { hide(); continue; }
+    const [x, y] = m;
+    if (x < -50 || y < -20 || x > viewW + 50 || y > viewH + 20) { hide(); continue; }
     if (!L.w) { L.el.style.display = ''; L.w = L.el.offsetWidth; L.h = L.el.offsetHeight; }
-    const r = [x - L.w / 2, y - L.h - 3, x + L.w / 2, y - 3];
-    if (placed.some(p => r[0] < p[2] + 2 && r[2] + 2 > p[0] && r[1] < p[3] + 1 && r[3] + 1 > p[1])) { L.el.style.display = 'none'; continue; }
-    placed.push(r);
+    let dx = b[0] - a[0], dy = b[1] - a[1];
+    const len = Math.hypot(dx, dy);
+    if (len < L.w * 0.75) { hide(); continue; }   // line too short on screen to carry the name
+    if (dx < 0) { dx = -dx; dy = -dy; }               // keep text reading left to right
+    const ux = dx / len, uy = dy / len, nx = uy, ny = -ux;  // n points "up" off the line
+    const off = L.h / 2 + 2.5, cx = x + nx * off, cy = y + ny * off;
+    const hw = L.w / 2 + 1, hh = L.h / 2;
+    const poly = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([u, v]) => [cx + u * ux - v * nx, cy + u * uy - v * ny]);
+    if (placed.some(q => obbHit(poly, q))) { hide(); continue; }
+    placed.push(poly);
     L.el.style.display = '';
-    L.el.style.transform = `translate(${Math.round(ox + r[0])}px, ${Math.round(oy + r[1])}px)`;
+    L.el.style.transform = `translate(${(ox + cx - L.w / 2).toFixed(1)}px, ${(oy + cy - L.h / 2).toFixed(1)}px) rotate(${Math.atan2(uy, ux).toFixed(4)}rad)`;
   }
 }
 
@@ -951,7 +977,8 @@ function applyVertical() {
 const fmt = (v, d = 0) => v == null || !isFinite(v) ? '–' : v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 function renderPanel(side, r, S) {
   const p = panels[side];
-  $('.title', p).innerHTML = `<span class="chev" aria-hidden="true"></span>${esc(r.name)}<small>${esc([r.region, r.countryName].filter(Boolean).join(', '))}</small>`;
+  $('.pick', p).innerHTML = `<span class="nm">${esc(r.name)}</span><span class="caret" aria-hidden="true">▾</span><small>${esc([r.region, r.countryName].filter(Boolean).join(', '))}</small>`;
+  $('.pick', p).title = 'Choose another resort';
   const vert = r.top != null && r.base != null ? r.top - r.base : null;
   const rows = [
     ['Mapped runs', `${fmt(r.runKm)} km`],
