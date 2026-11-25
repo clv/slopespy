@@ -273,19 +273,6 @@ function setupTools() {
   updateElevIcons();
   window.addEventListener('resize', resize);
   updateLegend();
-  // temporary shading tuner
-  let tuneQueued = false;
-  for (const k of ['inside', 'outside']) {
-    const input = $(`#tune-${k}`), out = $(`#tune-${k}-v`);
-    const show = () => { out.textContent = (shading[k] > 0 ? '+' : '') + shading[k]; };
-    input.value = shading[k]; show();
-    input.addEventListener('input', () => {
-      shading[k] = +input.value; show();
-      if (tuneQueued) return;
-      tuneQueued = true;
-      requestAnimationFrame(() => { tuneQueued = false; sides.forEach(S => S.ground && applyShading(S.ground)); requestRender(); });
-    });
-  }
 }
 
 // ---------- resort selection ----------
@@ -708,7 +695,7 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
 }
 
 // Shading: -100 darkens to black, +100 lightens to white.
-const shading = { inside: 10, outside: -20 };
+const shading = { inside: 10, outside: -67 };  // +10 lightens inside the ski area, -67 darkens outside
 let shadeTmp = null;
 function applyShading(G) {
   const { cv, base, mask, tex } = G, W = cv.width, H = cv.height;
@@ -1189,25 +1176,27 @@ function renderPanel(side, r, S) {
 
 // The two elevation icons: each resort as a little peak, its height its vertical.
 // "Side by side" stands both on the same baseline; "true elevation" draws them at their real heights.
+// The mountain shapes from the logo, in units of peak height (peak at 0,0, base at y = 1).
+const ICON_PEAKS = [
+  { body: [[-19, 34], [0, 0], [9, 14], [13.5, 7], [35, 34]], snow: [[0, 0], [-5.4, 9.5], [-1.7, 7.6], [.5, 10.4], [3.3, 7.6], [5.2, 8.6]], h: 34, fill: '#4fa3ff' },
+  { body: [[-22, 38], [0, 0], [24, 38]], snow: [[0, 0], [-6.2, 10.5], [-2.3, 8.5], [.4, 11.7], [3.4, 8.3], [6.4, 10.1]], h: 38, fill: '#ff8a3d' },
+];
 function elevIcon(aligned) {
   const r = sides.map(S => S.resort);
-  const W = 30, H = 18, pad = 1, colors = ['#4fa3ff', '#ff8a3d'];
+  const W = 32, H = 18, pad = 1;
   const lo = r.map(x => x?.base ?? 0), hi = r.map((x, i) => x?.top ?? lo[i] + 500);
   let y0 = Math.min(...lo), y1 = Math.max(...hi);
   if (aligned) { y0 = 0; y1 = Math.max(hi[0] - lo[0], hi[1] - lo[1]); }
   const sy = v => H - pad - (v - y0) / Math.max(1, y1 - y0) * (H - 2 * pad);
-  const f = n => n.toFixed(1);
-  // a little massif: main peak, a shoulder and a lower secondary peak, with a snowcap
   const mountain = (i, cx) => {
-    const yb = sy(aligned ? 0 : lo[i]), yt = Math.min(yb - 3, sy(aligned ? hi[i] - lo[i] : hi[i]));
-    const h = yb - yt, w = Math.max(5, Math.min(7.5, h * 0.8));
-    const at = (dx, k) => `${f(cx + dx * w)} ${f(yb - k * h)}`;
-    const ridge = `M${at(-1, 0)} L${at(-0.62, 0.42)} L${at(-0.45, 0.33)} L${at(-0.12, 1)} L${at(0.18, 0.62)} L${at(0.34, 0.74)} L${at(1, 0)} Z`;
-    const snow = h > 5 ? `<path d="M${at(-0.12, 1)} L${at(-0.3, 0.72)} L${at(-0.19, 0.78)} L${at(-0.1, 0.7)} L${at(0.02, 0.8)} Z" fill="#fff" opacity=".92"/>` : '';
-    return `<path d="${ridge}" fill="${colors[i]}" stroke="#0f1419" stroke-width=".6" stroke-linejoin="round"/>${snow}`;
+    const P = ICON_PEAKS[i];
+    const yb = sy(aligned ? 0 : lo[i]), yt = Math.min(yb - 2.5, sy(aligned ? hi[i] - lo[i] : hi[i]));
+    const k = (yb - yt) / P.h;
+    const pts = a => a.map(([x, y]) => `${(cx + x * k).toFixed(1)},${(yt + y * k).toFixed(1)}`).join(' ');
+    return `<polygon points="${pts(P.body)}" fill="${P.fill}"/>` + (k * P.h > 6 ? `<polygon points="${pts(P.snow)}" fill="#fff"/>` : '');
   };
   const base = aligned ? `<path d="M1 ${H - pad + .4} H${W - 1}" stroke="currentColor" stroke-width="1" opacity=".5"/>` : '';
-  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">${mountain(1, 20.5)}${mountain(0, 9.5)}${base}</svg>`;
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true"><defs><clipPath id="ic${+aligned}"><rect width="${W}" height="${H}"/></clipPath></defs><g clip-path="url(#ic${+aligned})">${mountain(0, 11)}${mountain(1, 21)}</g>${base}</svg>`;
 }
 function updateElevIcons() {
   const A = sides[0].resort, B = sides[1].resort;
