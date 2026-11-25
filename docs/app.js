@@ -64,8 +64,7 @@ function makeSide(i) {
   scene.add(root);
   const flat = new THREE.Group();  // objects kept at true height (trees, buildings), placed on the exaggerated terrain
   scene.add(flat);
-  const labelLayer = document.querySelector(`.labels[data-side="${i}"]`);
-  return { i, scene, root, flat, labelLayer, labels: [], resort: null, token: 0, mid: 0, extent: 0, runsObj: null, liftsObj: null };
+  return { i, scene, root, flat, labelsObj: null, resort: null, token: 0, mid: 0, extent: 0, runsObj: null, liftsObj: null };
 }
 const sides = [makeSide(0), makeSide(1)];
 
@@ -120,16 +119,14 @@ const picker = { side: 0, items: [], act: 0 };
 function setupPickers() {
   const sheet = $('#picker'), input = $('#q'), list = $('.results', sheet), sortSel = $('#sort'), count = $('.count', sheet);
   sortSel.innerHTML = Object.entries(SORTS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
-  const render = scrollToCurrent => {
-    sortSel.value = sortKey;
-    const q = norm(input.value.trim());
-    const words = q.split(/\s+/).filter(Boolean);
-    const items = picker.items = sortedIndex(INDEX.filter(r => words.every(w => r._s.includes(w))));
-    const cur = sides[picker.side].resort?.id;
+  // Rows are added in chunks as the list scrolls, so typing stays fast on phones.
+  const CHUNK = 250;
+  let shown = 0, lastC = null, lastK = null, cur = null;
+  const rowsHtml = (from, to) => {
     const metric = SORTS[sortKey].fmt ? SORTS[sortKey] : SORTS.runKm;
-    let html = '', lastC = null, lastK = null;
-    picker.act = Math.max(0, scrollToCurrent ? items.findIndex(r => r.id === cur) : 0);
-    items.forEach((r, k) => {
+    let html = '';
+    for (let k = from; k < to; k++) {
+      const r = picker.items[k];
       if (sortKey === 'region') {
         if (r.cont !== lastC) { html += `<li class="h1">${esc(r.cont)}</li>`; lastC = r.cont; lastK = null; }
         const cn = r.countryName || r.country || '—';
@@ -137,19 +134,51 @@ function setupPickers() {
       }
       const sub = sortKey === 'region' ? (r.region || '') : (r.countryName || r.country || '');
       const val = metric.get(r);
-      html += `<li role="option" data-k="${k}" class="${k === picker.act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n">${esc(r.name)} <span class="m">${esc(sub)}</span></span><span class="v">${val == null ? '–' : metric.fmt(val)}</span></li>`;
-    });
-    list.innerHTML = html || '<li class="h2">No resorts match</li>';
-    count.textContent = `${fmt(items.length)} resort${items.length === 1 ? '' : 's'}`;
-    const a = list.querySelector('li.act');
-    if (a) a.scrollIntoView({ block: scrollToCurrent ? 'center' : 'nearest' }); else list.scrollTop = 0;
+      html += `<li role="option" data-k="${k}" class="${k === picker.act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n"><span class="nm">${esc(r.name)}</span> <span class="m">${esc(sub)}</span></span><span class="v">${val == null ? '–' : metric.fmt(val)}</span></li>`;
+    }
+    return html;
   };
-  const close = () => { sheet.hidden = true; document.body.classList.remove('sheet-open'); };
+  const more = upTo => {
+    const to = Math.min(picker.items.length, Math.max(upTo || 0, shown + CHUNK));
+    if (to > shown) { list.insertAdjacentHTML('beforeend', rowsHtml(shown, to)); shown = to; }
+  };
+  // scroll only the list, never the page (scrollIntoView also scrolls the page on iOS)
+  const reveal = (li, center) => {
+    if (!li) return;
+    const top = li.offsetTop, h = li.offsetHeight, view = list.clientHeight;
+    if (center) list.scrollTop = top - view / 2 + h / 2;
+    else if (top < list.scrollTop + 40) list.scrollTop = top - 40;
+    else if (top + h > list.scrollTop + view) list.scrollTop = top + h - view;
+  };
+  const render = scrollToCurrent => {
+    sortSel.value = sortKey;
+    const q = norm(input.value.trim());
+    const words = q.split(/\s+/).filter(Boolean);
+    picker.items = sortedIndex(INDEX.filter(r => words.every(w => r._s.includes(w))));
+    cur = sides[picker.side].resort?.id;
+    picker.act = Math.max(0, scrollToCurrent ? picker.items.findIndex(r => r.id === cur) : 0);
+    list.innerHTML = ''; shown = 0; lastC = lastK = null;
+    if (!picker.items.length) list.innerHTML = '<li class="h2">No resorts match</li>';
+    more(picker.act + 60);
+    count.textContent = `${fmt(picker.items.length)} resort${picker.items.length === 1 ? '' : 's'}`;
+    list.scrollTop = 0;
+    if (scrollToCurrent) reveal(list.querySelector('li.act'), true);
+  };
+  list.addEventListener('scroll', () => { if (list.scrollTop + list.clientHeight > list.scrollHeight - 600) more(); }, { passive: true });
+  // keep the sheet inside the visible area when the phone keyboard is up
+  const vv = window.visualViewport;
+  const fitSheet = () => {
+    if (!vv || !SMALL_SCREEN) return;
+    for (const el of [sheet, $('#about')]) { el.style.top = `${vv.offsetTop}px`; el.style.height = `${vv.height}px`; el.style.bottom = 'auto'; }
+  };
+  vv?.addEventListener('resize', fitSheet); vv?.addEventListener('scroll', fitSheet);
+  const close = () => { sheet.hidden = true; document.documentElement.classList.remove('sheet-open'); input.blur(); window.scrollTo(0, 0); };
   window.openPicker = side => {
     picker.side = side;
     sheet.dataset.side = side;
     sheet.hidden = false;
-    document.body.classList.add('sheet-open');
+    document.documentElement.classList.add('sheet-open');
+    fitSheet();
     input.value = '';
     input.placeholder = `${sides[side].resort?.name ? `Replace ${sides[side].resort.name}…` : 'Search 4,000+ resorts…'}`;
     render(true);
@@ -162,8 +191,9 @@ function setupPickers() {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
       picker.act = Math.max(0, Math.min(picker.items.length - 1, picker.act + (e.key === 'ArrowDown' ? 1 : -1)));
-      list.querySelectorAll('li[data-k]').forEach(li => li.classList.toggle('act', +li.dataset.k === picker.act));
-      list.querySelector('li.act')?.scrollIntoView({ block: 'nearest' });
+      more(picker.act + 20);
+      list.querySelectorAll('li.act').forEach(li => li.classList.remove('act'));
+      const li = list.querySelector(`li[data-k="${picker.act}"]`); li?.classList.add('act'); reveal(li, false);
     } else if (e.key === 'Enter') { e.preventDefault(); pick(picker.act); }
   });
   document.addEventListener('keydown', e => { if (e.key === 'Escape') { close(); closeAbout(); } });
@@ -178,7 +208,7 @@ function setupPickers() {
   // about / credits
   const about = $('#about');
   window.closeAbout = () => { about.hidden = true; };
-  const openAbout = () => { about.hidden = false; $('#aboutClose').focus(); };
+  const openAbout = () => { about.hidden = false; fitSheet(); $('#aboutClose').focus(); };
   $('#infoBtn').addEventListener('click', openAbout);
   $('#credit').addEventListener('click', openAbout);
   $('#aboutClose').addEventListener('click', closeAbout);
@@ -200,10 +230,7 @@ function setupTools() {
     try { localStorage.setItem('sc.collapsed', collapsed ? '1' : '0'); } catch {}
   }));
   applyCollapse();
-  const exag = $('#exag'), exagOut = $('#exagOut');
-  exag.value = settings.exag; exagOut.textContent = `${settings.exag}×`;
-  exag.addEventListener('input', e => { settings.exag = +e.target.value; exagOut.textContent = `${settings.exag}×`; applyVertical(); });
-  $('#showLabels').addEventListener('change', e => { settings.labels = e.target.checked; requestRender(); });
+  $('#showLabels').addEventListener('change', e => { settings.labels = e.target.checked; sides.forEach(S => { if (S.labelsObj) S.labelsObj.visible = settings.labels; }); requestRender(); });
   $('#absElev').addEventListener('change', e => { settings.absElev = e.target.checked; applyVertical(); });
   window.addEventListener('resize', resize);
   updateLegend();
@@ -362,11 +389,11 @@ function disposeTree(obj) {
 function buildSide(S, data, terrain, landcover, features) {
   for (const g of [S.root, S.flat]) for (const c of [...g.children]) { g.remove(c); disposeTree(c); }
   if (hover?.S === S) setHover(null);
-  S.labelLayer.innerHTML = ''; S.labels = []; S.liftList = []; S.trees = null; S.buildings = null; S.placedExag = null;
+  S.labelsObj = null; S.liftList = []; S.trees = null; S.buildings = null; S.placedExag = null;
   const [cx, cy] = [(data.bbox[0] + data.bbox[2]) / 2, (data.bbox[1] + data.bbox[3]) / 2];
   const kx = EARTH_R * DEG * Math.cos(cy * DEG), ky = EARTH_R * DEG;
   const toX = lon => (lon - cx) * kx, toZ = lat => -(lat - cy) * ky;
-  S.project = { toX, toZ };
+  S.project = { toX, toZ, fromXZ: (x, z) => [cx + x / kx, cy - z / ky] };
 
   // --- terrain mesh ---
   const { z } = terrain;
@@ -707,12 +734,6 @@ function liftName(f) {
 }
 function liftSeats(f) { return f.o && !SURFACE.has(f.k) && f.k !== 'magic_carpet' ? f.o : null; }
 
-function labelHtml(f) {
-  const { short } = liftName(f);
-  const seats = liftSeats(f);
-  const txt = short.length > 22 ? short.slice(0, 21).trimEnd() + '…' : short;
-  return `${iconSvg(f.k)}${seats ? `<b class="seat">${seats}</b>` : ''}${txt ? `<span>${esc(txt)}</span>` : ''}`;
-}
 
 function liftInfo(L) {
   const f = L.f, { full } = liftName(f), seats = liftSeats(f);
@@ -766,17 +787,112 @@ function buildLifts(S, data, terrain) {
   }
   S.liftsObj = g;
   S.root.add(g);
-  // labels, longest lifts first so they win collisions
-  S.labels = S.liftList.slice().sort((a, b) => b.len - a.len).map(L => {
-    const el = document.createElement('div');
-    el.className = 'lift-label';
-    el.innerHTML = labelHtml(L.f);
-    el.addEventListener('pointerenter', () => setHover(S, L, null));
-    el.addEventListener('pointerleave', () => setHover(null));
-    S.labelLayer.appendChild(el);
-    L.el = el;
-    return { el, mid: L.mid, w: 0, h: 0, L };
-  });
+  buildLiftLabels(S, terrain);
+}
+
+// Lift names are painted onto the terrain beside each lift, like a map label draped over the slope.
+// They are real geometry, so they never move or re-flow as the camera moves; zoom in to read small ones.
+const LABEL_H = 140;      // metres, text height on the ground (shrunk to fit short lifts)
+const LABEL_MIN_H = 24;
+const LABEL_PX = 64;      // texture pixels per text height
+const ICON_IMG = {};
+function iconImage(k) {
+  const key = iconFor(k);
+  if (!ICON_IMG[key]) {
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 16 16" width="64" height="64" fill="none" stroke="#ffd23f" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">${ICON_PATHS[key]}</svg>`;
+    const img = new Image();
+    ICON_IMG[key] = { img, ready: new Promise(r => { img.onload = r; img.onerror = r; }) };
+    img.src = 'data:image/svg+xml,' + encodeURIComponent(svg);
+  }
+  return ICON_IMG[key];
+}
+function labelCanvas(f) {
+  const { short } = liftName(f), seats = liftSeats(f);
+  const txt = short.length > 28 ? short.slice(0, 27).trimEnd() + '…' : short;
+  const P = LABEL_PX, font = `600 ${Math.round(P * 0.62)}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const c = document.createElement('canvas'), x = c.getContext('2d');
+  x.font = font;
+  const iconW = P * 0.78, seatW = seats ? x.measureText(String(seats)).width * 0.8 + P * 0.36 : 0;
+  const pad = P * 0.14, gap = P * 0.12;
+  const w = Math.ceil(pad + iconW + gap + (seats ? seatW + gap : 0) + x.measureText(txt).width + pad);
+  c.width = w; c.height = P;
+  const draw = () => {
+    x.clearRect(0, 0, w, P);
+    x.font = font; x.textBaseline = 'middle'; x.lineJoin = 'round';
+    let cx = pad;
+    const ic = iconImage(f.k).img;
+    if (ic.complete && ic.naturalWidth) {
+      x.shadowColor = '#111418'; x.shadowBlur = P * 0.08;
+      x.drawImage(ic, cx, (P - iconW) / 2, iconW, iconW);
+      x.shadowBlur = 0;
+    }
+    cx += iconW + gap;
+    if (seats) {
+      x.fillStyle = '#111418'; x.beginPath(); x.roundRect(cx - 2, P * 0.17 - 2, seatW + 4, P * 0.66 + 4, P * 0.14); x.fill();
+      x.fillStyle = '#ffd23f'; x.beginPath(); x.roundRect(cx, P * 0.17, seatW, P * 0.66, P * 0.11); x.fill();
+      x.fillStyle = '#111418'; x.font = `700 ${Math.round(P * 0.5)}px system-ui, sans-serif`; x.textAlign = 'center';
+      x.fillText(String(seats), cx + seatW / 2, P * 0.52);
+      x.font = font; x.textAlign = 'left';
+      cx += seatW + gap;
+    }
+    x.strokeStyle = 'rgba(17,20,24,.92)'; x.lineWidth = P * 0.16; x.strokeText(txt, cx, P * 0.53);
+    x.fillStyle = '#fff6d6'; x.fillText(txt, cx, P * 0.53);
+  };
+  draw();
+  return { c, aspect: w / P, redraw: draw, ready: iconImage(f.k).ready };
+}
+
+function buildLiftLabels(S, terrain) {
+  const { fromXZ } = S.project;
+  const g = new THREE.Group();
+  const maxAniso = renderer.capabilities.getMaxAnisotropy();
+  const pending = [];
+  for (const L of S.liftList) {
+    if (!L.f.n || L.len < 120) continue;
+    const P = L.pts, a = P[0], b = P[P.length - 1];
+    let dx = b.x - a.x, dz = b.z - a.z;
+    const hl = Math.hypot(dx, dz);
+    if (hl < 1) continue;
+    dx /= hl; dz /= hl;
+    // read west-to-east, so text faces the default (south-looking-north) camera the right way up
+    if (dx < 0 || (dx === 0 && dz > 0)) { dx = -dx; dz = -dz; }
+    const ux = dz, uz = -dx;              // "up" on the page: away from the lift
+    const lab = labelCanvas(L.f);
+    let H = LABEL_H, W = H * lab.aspect;
+    const room = L.len * 0.86;
+    if (W > room) { H = Math.max(LABEL_MIN_H, H * room / W); W = H * lab.aspect; }
+    const gapM = 6 + H * 0.1;
+    const sx = L.mid.x - dx * W / 2 + ux * gapM, sz = L.mid.z - dz * W / 2 + uz * gapM;
+    const NU = Math.max(2, Math.ceil(W / 12)), NV = Math.max(1, Math.ceil(H / 12));
+    const pos = new Float32Array((NU + 1) * (NV + 1) * 3), uv = new Float32Array((NU + 1) * (NV + 1) * 2), idx = [];
+    for (let j = 0; j <= NV; j++) for (let i = 0; i <= NU; i++) {
+      const u = i / NU, v = j / NV, k = j * (NU + 1) + i;
+      const x = sx + dx * W * u + ux * H * v, z = sz + dz * W * u + uz * H * v;
+      const [lon, lat] = fromXZ(x, z);
+      pos[3 * k] = x; pos[3 * k + 1] = terrain.sample(lon, lat) + 10; pos[3 * k + 2] = z;
+      uv[2 * k] = u; uv[2 * k + 1] = v;
+    }
+    for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) {
+      const a0 = j * (NU + 1) + i, a1 = a0 + 1, b0 = a0 + NU + 1, b1 = b0 + 1;
+      idx.push(a0, b0, a1, a1, b0, b1);
+    }
+    const geo = new THREE.BufferGeometry();
+    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
+    geo.setIndex(idx);
+    const tex = new THREE.CanvasTexture(lab.c);
+    tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = maxAniso;
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide,
+      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
+    const mesh = new THREE.Mesh(geo, mat);
+    mesh.renderOrder = 1;
+    g.add(mesh);
+    pending.push(lab.ready.then(() => { lab.redraw(); tex.needsUpdate = true; }));
+  }
+  g.visible = settings.labels;
+  S.labelsObj = g;
+  S.root.add(g);
+  Promise.all(pending).then(requestRender);
 }
 
 const DOT_TEX = (() => {
@@ -788,6 +904,7 @@ const DOT_TEX = (() => {
 })();
 
 // hover: nearest lift to the pointer in screen space
+const _v = new THREE.Vector3();
 let hover = null;
 const tooltip = document.createElement('div');
 tooltip.className = 'lift-tip'; tooltip.hidden = true;
@@ -861,56 +978,6 @@ function processHover() {
   }
   if (best) setHover(S, best, [mx, my]); else if (hover) setHover(null);
   canvas.style.cursor = best ? 'pointer' : '';
-}
-
-const _v = new THREE.Vector3(), _a = new THREE.Vector3(), _b = new THREE.Vector3();
-function toScreen(v, out) {
-  out.copy(v).applyMatrix4(_mw).project(camera);
-  return out.z <= 1 ? [(out.x + 1) / 2 * viewW, (1 - out.y) / 2 * viewH] : null;
-}
-const _mw = new THREE.Matrix4();
-// do two convex polygons (4 corners each) overlap? separating-axis test
-function obbHit(p, q) {
-  for (const poly of [p, q]) {
-    for (let i = 0; i < 4; i++) {
-      const [x1, y1] = poly[i], [x2, y2] = poly[(i + 1) % 4], nx = y1 - y2, ny = x2 - x1;
-      let pmin = Infinity, pmax = -Infinity, qmin = Infinity, qmax = -Infinity;
-      for (const [x, y] of p) { const d = x * nx + y * ny; pmin = Math.min(pmin, d); pmax = Math.max(pmax, d); }
-      for (const [x, y] of q) { const d = x * nx + y * ny; qmin = Math.min(qmin, d); qmax = Math.max(qmax, d); }
-      if (pmax < qmin || qmax < pmin) return false;
-    }
-  }
-  return true;
-}
-// Lift names are written along the lift line, just above it, and only where the line is long enough on screen.
-function updateLabels(S, ox, oy) {
-  if (!S.labels.length) return;
-  const show = settings.lifts && settings.labels;
-  S.labelLayer.style.display = show ? '' : 'none';
-  if (!show) return;
-  S.root.updateMatrixWorld();
-  _mw.copy(S.root.matrixWorld);
-  const placed = [];
-  for (const L of S.labels) {
-    const P = L.L.pts, a = toScreen(P[0], _a), b = toScreen(P[P.length - 1], _b), m = toScreen(L.mid, _v);
-    const hide = () => { L.el.style.display = 'none'; };
-    if (!a || !b || !m) { hide(); continue; }
-    const [x, y] = m;
-    if (x < -50 || y < -20 || x > viewW + 50 || y > viewH + 20) { hide(); continue; }
-    if (!L.w) { L.el.style.display = ''; L.w = L.el.offsetWidth; L.h = L.el.offsetHeight; }
-    let dx = b[0] - a[0], dy = b[1] - a[1];
-    const len = Math.hypot(dx, dy);
-    if (len < L.w * 0.75) { hide(); continue; }   // line too short on screen to carry the name
-    if (dx < 0) { dx = -dx; dy = -dy; }               // keep text reading left to right
-    const ux = dx / len, uy = dy / len, nx = uy, ny = -ux;  // n points "up" off the line
-    const off = L.h / 2 + 2.5, cx = x + nx * off, cy = y + ny * off;
-    const hw = L.w / 2 + 1, hh = L.h / 2;
-    const poly = [[-hw, -hh], [hw, -hh], [hw, hh], [-hw, hh]].map(([u, v]) => [cx + u * ux - v * nx, cy + u * uy - v * ny]);
-    if (placed.some(q => obbHit(poly, q))) { hide(); continue; }
-    placed.push(poly);
-    L.el.style.display = '';
-    L.el.style.transform = `translate(${(ox + cx - L.w / 2).toFixed(1)}px, ${(oy + cy - L.h / 2).toFixed(1)}px) rotate(${Math.atan2(uy, ux).toFixed(4)}rad)`;
-  }
 }
 
 function buildSkirt(pos, nx, ny, floor) {
@@ -1112,7 +1179,6 @@ function frame() {
     renderer.setViewport(x, y, viewW, viewH);
     renderer.setScissor(x, y, viewW, viewH);
     renderer.render(S.scene, camera);
-    updateLabels(S, x, H - y - viewH);
   });
   updateScaleBar();
   updateCompass();
