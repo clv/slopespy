@@ -383,14 +383,15 @@ async function selectResort(side, id, refit = true) {
     if (!terrain) terrain = await loadTerrain(data.bbox, progress, data.win);
     if (token !== S.token) return;
     setStatus(side, 'Loading trees and buildings…');
-    const [landcover, features] = await Promise.all([
+    const [landcover, features, places] = await Promise.all([
       loadLandcover(id).catch(err => { console.warn('no landcover', err); return null; }),
       fetch(`data/features/${id}.json`).then(r => r.ok ? r.json() : null).then(decodeFeatures).catch(() => null),
+      fetch(`data/places/${id}.json`).then(r => r.ok ? r.json() : null).catch(() => null),
     ]);
     if (token !== S.token) return;
     setStatus(side, 'Building model…');
     await new Promise(r => setTimeout(r, 0));
-    buildSide(S, data, terrain, landcover, features);
+    buildSide(S, data, terrain, landcover, features, places);
     renderPanel(side, meta, S);
     setStatus(side, '');
     applyVertical();
@@ -565,10 +566,10 @@ function disposeTree(obj) {
   obj.traverse(o => { o.geometry?.dispose(); if (o.material) { lineMaterials.delete(o.material); o.material.dispose(); } });
 }
 
-function buildSide(S, data, terrain, landcover, features) {
+function buildSide(S, data, terrain, landcover, features, places) {
   for (const g of [S.root, S.flat]) for (const c of [...g.children]) { g.remove(c); disposeTree(c); }
   if (hover?.S === S) setHover(null);
-  S.labelsObj = null; S.ground = null; S.liftList = []; S.trees = null; S.buildings = null; S.placedExag = null;
+  S.labelsObj = null; S.placesObj = null; S.ground = null; S.liftList = []; S.trees = null; S.buildings = null; S.placedExag = null;
   const [cx, cy] = [(data.bbox[0] + data.bbox[2]) / 2, (data.bbox[1] + data.bbox[3]) / 2];
   const kx = EARTH_R * DEG * Math.cos(cy * DEG), ky = EARTH_R * DEG;
   const toX = lon => (lon - cx) * kx, toZ = lat => -(lat - cy) * ky;
@@ -612,7 +613,7 @@ function buildSide(S, data, terrain, landcover, features) {
   // colour by slope and position within the resort's elevation band
   const cols = new Float32Array(vcount * 3);
   const base = data.base ?? hmin, top = data.top ?? hmax;
-  const cValley = new THREE.Color('#7f9a7a'), cMid = new THREE.Color('#cfd6d2'), cSnow = new THREE.Color('#fbfcfd'), cRock = new THREE.Color('#8b857c');
+  const cValley = new THREE.Color('#c4d6ac'), cMid = new THREE.Color('#ecede8'), cSnow = new THREE.Color('#fafafa'), cRock = new THREE.Color('#b3b0aa');
   const nrm = geo.attributes.normal.array, tmp = new THREE.Color();
   for (let k = 0; k < vcount; k++) {
     const h = heights[k];
@@ -637,16 +638,23 @@ function buildSide(S, data, terrain, landcover, features) {
     shader.uniforms.uGrid = gridUniform;
     shader.vertexShader = shader.vertexShader
       .replace('#include <common>', '#include <common>\nvarying vec2 vGridPos;')
-      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGridPos = position.xz;');
+      .replace('#include <common>', '#include <common>\nvarying float vElev;')
+      .replace('#include <begin_vertex>', '#include <begin_vertex>\nvGridPos = position.xz;\nvElev = position.y;');
     shader.fragmentShader = shader.fragmentShader
-      .replace('#include <common>', '#include <common>\nvarying vec2 vGridPos;\nuniform float uGrid;')
+      .replace('#include <common>', '#include <common>\nvarying vec2 vGridPos;\nvarying float vElev;\nuniform float uGrid;')
       .replace('#include <color_fragment>', `#include <color_fragment>
         vec2 gp = vGridPos / 1000.0;
         vec2 gw = fwidth(gp);
         vec2 gl = abs(fract(gp - 0.5) - 0.5) / max(gw, vec2(1e-6));
         float gline = 1.0 - min(min(gl.x, gl.y), 1.0);
         gline *= 1.0 - smoothstep(0.08, 0.35, max(gw.x, gw.y));
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.16, 0.24, 0.34), gline * 0.45 * uGrid);`);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.16, 0.24, 0.34), gline * 0.45 * uGrid);
+        // contour lines: every 20 m, stronger every 100 m; each set fades out before it gets too dense
+        float c20 = vElev / 20.0, w20 = fwidth(c20);
+        float l20 = (1.0 - min(abs(fract(c20 - 0.5) - 0.5) / max(w20, 1e-6), 1.0)) * (1.0 - smoothstep(0.12, 0.35, w20));
+        float c100 = vElev / 100.0, w100 = fwidth(c100);
+        float l100 = (1.0 - min(abs(fract(c100 - 0.5) - 0.5) / max(w100 * 1.3, 1e-6), 1.0)) * (1.0 - smoothstep(0.15, 0.45, w100));
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.38, 0.33), max(l20 * 0.16, l100 * 0.32));`);
   };
   const mesh = new THREE.Mesh(geo, mat);
   S.root.add(mesh);
@@ -714,17 +722,19 @@ function buildSide(S, data, terrain, landcover, features) {
   S.mid = ((data.top ?? hmax) + (data.base ?? hmin)) / 2;
   S.zoom = z;
   S.cell = cell;
+  if (places) buildPlaceLabels(S, places, terrain);
   applyVisibility();
 }
 
 // ---------- land cover, trees, buildings ----------
-// ESA WorldCover classes -> winter map colours
+// ESA WorldCover classes -> light topographic map colours (in the spirit of OpenSkiMap's base map)
 const LC_COLORS = {
-  0: [244, 246, 248], 10: [63, 92, 66], 20: [214, 222, 214], 30: [244, 246, 248], 40: [238, 240, 242],
-  50: [208, 204, 198], 60: [236, 238, 240], 70: [255, 255, 255], 80: [160, 192, 214], 90: [226, 232, 234],
-  95: [80, 110, 85], 100: [238, 240, 242],
+  0: [242, 242, 239], 10: [196, 214, 172], 20: [224, 232, 214], 30: [238, 240, 232], 40: [240, 240, 230],
+  50: [226, 222, 216], 60: [240, 239, 236], 70: [252, 252, 252], 80: [170, 203, 230], 90: [221, 232, 224],
+  95: [196, 214, 172], 100: [236, 236, 231],
 };
-const ROAD_STYLE = { major: ['#8a8580', 14], minor: ['#9c9893', 8], service: ['#aaa6a1', 5] };
+// [fill, casing, width in metres]
+const ROAD_STYLE = { major: ['#f7da8f', '#c9a24e', 14], minor: ['#ffffff', '#b9b4ad', 8], service: ['#ffffff', '#c6c1ba', 5] };
 
 // features files store rings as flat [x1, y1, x2, y2, ...] metres from an origin; turn them back into [lon, lat]
 function decodeFeatures(f) {
@@ -772,20 +782,21 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
     const P = ([lon, lat]) => [(lon2px(lon, z) - crop[0]) * sx, (lat2px(lat, z) - crop[1]) * sy];
     const path = ring => { ring.forEach((pt, i) => { const [x, y] = P(pt); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); };
     const mPerTexPx = widthM / W;
-    ctx.fillStyle = '#b4b2ae';
+    ctx.fillStyle = '#e6e3df';
     for (const ring of features.p || []) { ctx.beginPath(); path(ring); ctx.closePath(); ctx.fill(); }
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-    for (const k of ['service', 'minor', 'major']) {
-      const [col, wm] = ROAD_STYLE[k];
-      ctx.strokeStyle = col; ctx.lineWidth = Math.max(k === 'major' ? 1.6 : 1, wm / mPerTexPx);
+    for (const pass of [1, 0]) for (const k of ['service', 'minor', 'major']) {   // casings first, then fills
+      const [fill, casing, wm] = ROAD_STYLE[k];
+      const w = Math.max(k === 'major' ? 1.6 : 1, wm / mPerTexPx);
+      ctx.strokeStyle = pass ? casing : fill; ctx.lineWidth = pass ? w + Math.max(1, w * 0.35) : w;
       ctx.beginPath();
       for (const line of features.r?.[k] || []) path(line);
       ctx.stroke();
     }
-    ctx.fillStyle = '#7d746b';
+    ctx.fillStyle = '#d9d0c7'; ctx.strokeStyle = '#b8aca0'; ctx.lineWidth = 1;
     ctx.beginPath();
     for (const [, ring] of features.b || []) { path(ring); ctx.closePath(); }
-    ctx.fill();
+    ctx.fill(); ctx.stroke();
   }
   // Inside/outside shading is applied on top of a saved copy, so it can be re-tuned live.
   let mask = null;
@@ -858,7 +869,7 @@ function buildTrees(S, lc, terrain, toX, toZ, z) {
   if (!count) return null;
   const geo = new THREE.ConeGeometry(4, 16, 6);
   geo.translate(0, 8, 0);
-  const mat = new THREE.MeshStandardMaterial({ color: '#2f4a33', roughness: 1, flatShading: true });
+  const mat = new THREE.MeshStandardMaterial({ color: '#7f9e6c', roughness: 1, flatShading: true });
   const mesh = new THREE.InstancedMesh(geo, mat, count);
   const base = new Float32Array(count * 4);
   for (let k = 0; k < count; k++) {
@@ -1010,13 +1021,15 @@ function buildLifts(S, data, terrain) {
   }
   S.liftsObj = g;
   S.root.add(g);
-  buildLiftLabels(S, terrain);
+  buildLiftLabels(S);
 }
 
-// Lift names are painted onto the terrain beside each lift, like a map label draped over the slope.
-// They are real geometry, so they never move or re-flow as the camera moves; zoom in to read small ones.
-const LABEL_H = 140;      // metres, text height on the ground (shrunk to fit short lifts)
-const LABEL_MIN_H = 24;
+// Lift names sit inline on the lift itself, like OpenSkiMap: a flat strip of text centred on the straight
+// line between the two stations. Each frame it only turns about the lift's own axis to face the camera, and
+// flips end for end when the lift would read right-to-left, so it is never upside down and never draped
+// over bumpy terrain. Its size is in metres, so it zooms with the model instead of re-flowing.
+const LABEL_H = 90;       // metres, text height (shrunk to fit short lifts)
+const LABEL_MIN_H = 18;
 const LABEL_PX = 64;      // texture pixels per text height
 const ICON_IMG = {};
 function iconImage(k) {
@@ -1065,57 +1078,155 @@ function labelCanvas(f) {
   return { c, aspect: w / P, redraw: draw, ready: iconImage(f.k).ready };
 }
 
-function buildLiftLabels(S, terrain) {
-  const { fromXZ } = S.project;
+function buildLiftLabels(S) {
   const g = new THREE.Group();
   const maxAniso = renderer.capabilities.getMaxAnisotropy();
   const pending = [];
   for (const L of S.liftList) {
     if (!L.f.n || L.len < 120) continue;
-    const P = L.pts, a = P[0], b = P[P.length - 1];
-    let dx = b.x - a.x, dz = b.z - a.z;
-    const hl = Math.hypot(dx, dz);
-    if (hl < 1) continue;
-    dx /= hl; dz /= hl;
-    // read west-to-east, so text faces the default (south-looking-north) camera the right way up
-    if (dx < 0 || (dx === 0 && dz > 0)) { dx = -dx; dz = -dz; }
-    const ux = dz, uz = -dx;              // "up" on the page: away from the lift
+    const a = L.pts[0], b = L.pts[L.pts.length - 1];
+    const chord = Math.hypot(b.x - a.x, (b.y - a.y) * settings.exag, b.z - a.z);
     const lab = labelCanvas(L.f);
     let H = LABEL_H, W = H * lab.aspect;
-    const room = L.len * 0.86;
+    const room = chord * 0.8;
     if (W > room) { H = Math.max(LABEL_MIN_H, H * room / W); W = H * lab.aspect; }
-    const gapM = 6 + H * 0.1;
-    const sx = L.mid.x - dx * W / 2 + ux * gapM, sz = L.mid.z - dz * W / 2 + uz * gapM;
-    const NU = Math.max(2, Math.ceil(W / 12)), NV = Math.max(1, Math.ceil(H / 12));
-    const pos = new Float32Array((NU + 1) * (NV + 1) * 3), uv = new Float32Array((NU + 1) * (NV + 1) * 2), idx = [];
-    for (let j = 0; j <= NV; j++) for (let i = 0; i <= NU; i++) {
-      const u = i / NU, v = j / NV, k = j * (NU + 1) + i;
-      const x = sx + dx * W * u + ux * H * v, z = sz + dz * W * u + uz * H * v;
-      const [lon, lat] = fromXZ(x, z);
-      pos[3 * k] = x; pos[3 * k + 1] = terrain.sample(lon, lat) + 10; pos[3 * k + 2] = z;
-      uv[2 * k] = u; uv[2 * k + 1] = v;
-    }
-    for (let j = 0; j < NV; j++) for (let i = 0; i < NU; i++) {
-      const a0 = j * (NU + 1) + i, a1 = a0 + 1, b0 = a0 + NU + 1, b1 = b0 + 1;
-      idx.push(a0, b0, a1, a1, b0, b1);
-    }
-    const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
-    geo.setAttribute('uv', new THREE.BufferAttribute(uv, 2));
-    geo.setIndex(idx);
+    if (W > chord * 1.1) continue;   // a name that can't fit along its lift would only clutter
     const tex = new THREE.CanvasTexture(lab.c);
     tex.colorSpace = THREE.SRGBColorSpace; tex.anisotropy = maxAniso;
-    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide,
-      polygonOffset: true, polygonOffsetFactor: -4, polygonOffsetUnits: -4 });
-    const mesh = new THREE.Mesh(geo, mat);
-    mesh.renderOrder = 1;
+    const mat = new THREE.MeshBasicMaterial({ map: tex, transparent: true, depthWrite: false, side: THREE.DoubleSide });
+    const mesh = new THREE.Mesh(new THREE.PlaneGeometry(W, H), mat);
+    mesh.renderOrder = 6;
+    mesh.matrixAutoUpdate = false;
+    mesh.userData = { a: a.clone(), b: b.clone(), H, flip: 1 };
     g.add(mesh);
     pending.push(lab.ready.then(() => { lab.redraw(); tex.needsUpdate = true; }));
   }
   g.visible = settings.labels;
   S.labelsObj = g;
-  S.root.add(g);
+  S.flat.add(g);   // unscaled group: the strip keeps its true shape whatever the vertical exaggeration
   Promise.all(pending).then(requestRender);
+}
+
+// ---------- peak and village names ----------
+// Map-style labels that always face the screen at a fixed pixel size, like OpenSkiMap's base map: peaks with
+// their height, towns and villages, and hamlets in small capitals. Where they would overlap, the more
+// important one wins (towns, then villages, then the highest peaks, then hamlets).
+const PLACE_STYLE = [
+  { px: 17, font: '650 {s}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fill: '#2b2b2b' },    // city
+  { px: 15, font: '650 {s}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fill: '#2b2b2b' },    // town
+  { px: 13.5, font: '600 {s}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fill: '#333' },     // village
+  { px: 10.5, font: 'italic 500 {s}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fill: '#5e5e5e', caps: true }, // hamlet
+];
+function placeCanvas(lines, styles, peak) {
+  const dpr = Math.min(2, devicePixelRatio || 1), S = 2 * dpr;   // draw at 2x screen pixels for sharp text
+  const c = document.createElement('canvas'), x = c.getContext('2d');
+  const fonts = styles.map(st => st.font.replace('{s}', st.px * S));
+  const tri = peak ? 9 * S : 0, gap = 2 * S, halo = 2.4 * S;
+  let w = tri, h = tri ? tri + gap : 0;
+  const metrics = lines.map((t, i) => { x.font = fonts[i]; if (styles[i].caps) x.letterSpacing = `${S}px`; const m = x.measureText(t).width; x.letterSpacing = '0px'; return m; });
+  w = Math.max(w, ...metrics) + 2 * halo;
+  h += styles.reduce((a, st) => a + st.px * S * 1.2, 0) + halo;
+  c.width = Math.ceil(w); c.height = Math.ceil(h);
+  x.textAlign = 'center'; x.textBaseline = 'top'; x.lineJoin = 'round';
+  let y = 0;
+  if (peak) {
+    x.fillStyle = '#6b5a48'; x.strokeStyle = 'rgba(255,255,255,.9)'; x.lineWidth = 2 * S;
+    x.beginPath(); x.moveTo(w / 2, y + 1 * S); x.lineTo(w / 2 + tri * 0.45, y + tri - 1 * S); x.lineTo(w / 2 - tri * 0.45, y + tri - 1 * S); x.closePath();
+    x.stroke(); x.fill();
+    y += tri + gap;
+  }
+  lines.forEach((t, i) => {
+    const st = styles[i];
+    x.font = fonts[i]; if (st.caps) x.letterSpacing = `${S}px`;
+    x.strokeStyle = 'rgba(255,255,255,.88)'; x.lineWidth = halo; x.strokeText(t, w / 2, y);
+    x.fillStyle = st.fill; x.fillText(t, w / 2, y);
+    x.letterSpacing = '0px';
+    y += st.px * S * 1.2;
+  });
+  // anchor: the peak's triangle, or the middle of a place name
+  return { c, w: c.width / S, h: c.height / S, ay: peak ? 1 - (tri / 2) / c.height : 0.5 };
+}
+function buildPlaceLabels(S, places, terrain) {
+  const { toX, toZ } = S.project;
+  const g = new THREE.Group(), items = [];
+  const peakStyle = { px: 11.5, font: '600 {s}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fill: '#5a4734' };
+  const eleStyle = { px: 10, font: '500 {s}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif', fill: '#7a6a5a' };
+  const short = n => n.split(' / ')[0];   // bilingual names ("Mont X / Monte X"): first one
+  for (const [n, lon, lat, rank] of places.v || []) items.push({ lon, lat, pri: rank === 3 ? 3 : rank, lab: placeCanvas([rank === 3 ? short(n).toUpperCase() : short(n)], [PLACE_STYLE[rank]]) });
+  (places.k || []).forEach(([n, lon, lat, ele], i) => items.push({ lon, lat, pri: 2.5 + i / 1000,
+    lab: ele != null ? placeCanvas([short(n), `${fmt(ele)} m`], [peakStyle, eleStyle], true) : placeCanvas([short(n)], [peakStyle], true) }));
+  items.sort((a, b) => a.pri - b.pri);
+  for (const it of items) {
+    const tex = new THREE.CanvasTexture(it.lab.c);
+    tex.colorSpace = THREE.SRGBColorSpace;
+    const sp = new THREE.Sprite(new THREE.SpriteMaterial({ map: tex, sizeAttenuation: false, depthTest: false, depthWrite: false, transparent: true }));
+    sp.center.set(0.5, it.lab.ay);
+    sp.renderOrder = 7;
+    sp.userData = { x: toX(it.lon), y: terrain.sample(it.lon, it.lat), z: toZ(it.lat), w: it.lab.w, h: it.lab.h, ay: it.lab.ay };
+    g.add(sp);
+  }
+  g.visible = settings.labels;
+  S.placesObj = g;
+  S.groundAt = (x, z) => terrain.sample(...S.project.fromXZ(x, z));
+  S.flat.add(g);
+}
+// Place the names for this frame: fixed pixel size, hidden when a ridge stands between them and the camera,
+// and thinned out wherever they would overlap.
+const _pp = new THREE.Vector3(), _pc = new THREE.Vector3();
+function hiddenByTerrain(S, from, to, ex) {
+  for (let i = 1; i < 24; i++) {
+    const t = i / 24, x = from.x + (to.x - from.x) * t, y = from.y + (to.y - from.y) * t, z = from.z + (to.z - from.z) * t;
+    if (y < S.groundAt(x, z) * ex - 8) return true;
+  }
+  return false;
+}
+function layoutPlaces(S) {
+  const g = S.placesObj;
+  if (!g?.visible) return;
+  const ex = settings.exag, k = 2 / (camera.projectionMatrix.elements[5] * viewH);   // screen px -> sprite scale
+  _pc.copy(camera.position).sub(S.flat.position);
+  const taken = [];
+  for (const sp of g.children) {
+    const u = sp.userData;
+    sp.position.set(u.x, u.y * ex + 6, u.z);
+    sp.scale.set(u.w * k, u.h * k, 1);
+    // screen rectangle
+    _pp.copy(sp.position).add(S.flat.position).project(camera);
+    const sx = (_pp.x + 1) / 2 * viewW, sy = (1 - _pp.y) / 2 * viewH;
+    const top = sy - (1 - u.ay) * u.h, r = { x0: sx - u.w / 2, x1: sx + u.w / 2, y0: top, y1: top + u.h };
+    let ok = _pp.z < 1 && r.x0 > 2 && r.x1 < viewW - 2 && r.y0 > 2 && r.y1 < viewH - 2;
+    if (ok) for (const t of taken) if (r.x0 < t.x1 && r.x1 > t.x0 && r.y0 < t.y1 && r.y1 > t.y0) { ok = false; break; }
+    if (ok) ok = !hiddenByTerrain(S, sp.position, _pc, ex);
+    sp.visible = ok;
+    if (ok) taken.push(r);
+  }
+}
+
+// Turn each lift label about its lift to face the camera (called before every render).
+const _la = new THREE.Vector3(), _lb = new THREE.Vector3(), _ld = new THREE.Vector3(), _ln = new THREE.Vector3(),
+  _lu = new THREE.Vector3(), _lc = new THREE.Vector3(), _lr = new THREE.Vector3();
+function orientLabels(S) {
+  const g = S.labelsObj;
+  if (!g?.visible) return;
+  const ex = settings.exag;
+  _lc.copy(camera.position).sub(S.flat.position);          // camera in the group's frame
+  _lr.setFromMatrixColumn(camera.matrixWorld, 0);           // screen right
+  for (const m of g.children) {
+    const { a, b, H } = m.userData;
+    _la.set(a.x, a.y * ex, a.z); _lb.set(b.x, b.y * ex, b.z);
+    _ld.subVectors(_lb, _la).normalize();
+    // read left to right on screen; a little hysteresis stops flicker when the lift points at the camera
+    const dr = _ld.dot(_lr);
+    if (dr * m.userData.flip < -0.08) m.userData.flip *= -1;
+    _ld.multiplyScalar(m.userData.flip);
+    const mid = _la.add(_lb).multiplyScalar(0.5);
+    _ln.subVectors(_lc, mid);
+    _ln.addScaledVector(_ld, -_ln.dot(_ld)).normalize();   // towards the camera, square to the lift
+    _lu.crossVectors(_ln, _ld);
+    m.matrix.makeBasis(_ld, _lu, _ln);
+    m.matrix.setPosition(mid.addScaledVector(_ln, H * 0.6)); // lifted off the cable so terrain doesn't clip it
+    m.matrixWorldNeedsUpdate = true;
+  }
 }
 
 const DOT_TEX = (() => {
@@ -1361,7 +1472,7 @@ function updateLegend() {
   if (convs.has('north_america') || convs.has('japan')) { add(DIFF_COLORS.green, 'Green'); add(convs.has('japan') ? DIFF_COLORS.red : DIFF_COLORS.blue, 'Blue/red'); }
   add(DIFF_COLORS.black, 'Black'); add(DIFF_COLORS.orange, 'Freeride');
   items.push(`<span><i style="background:${LIFT_COLOR};outline:2px solid #111418"></i>Lift</span>`); add(BOUNDARY_COLOR, 'Ski-area boundary');
-  add('#3f5c42', 'Trees'); add('#8a8580', 'Roads'); add('#b4b2ae', 'Parking'); add('#a39586', 'Buildings');
+  add('#7f9e6c', 'Trees'); add('#f7da8f', 'Roads'); add('#e6e3df', 'Parking'); add('#a39586', 'Buildings');
   $('#legend').innerHTML = items.join('');
 }
 
@@ -1470,6 +1581,8 @@ function frame() {
     const y = !stacked || i === 1 ? 0 : H - viewH;
     renderer.setViewport(x, y, viewW, viewH);
     renderer.setScissor(x, y, viewW, viewH);
+    orientLabels(S);
+    layoutPlaces(S);
     renderer.render(S.scene, camera);
   });
   updateScaleBar();

@@ -262,3 +262,5 @@ header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
 .results li .other { flex: none; margin: -6px -4px -6px 2px; width: 36px; align-self: stretch; display: grid; place-items: center; background: none; border: 0; border-left: 1px solid var(--line); color: var(--muted); cursor: pointer; border-radius: 0 6px 6px 0; }
 .results li .other:hover { background: #2a3a4a; color: var(--fg); }
 @media (max-width: 760px) { .results li .other { width: 46px; margin: -9px -12px -9px 4px; } }
+/* distance / size column: flush right, next to the other-side button */
+.results li[data-k] .v { margin-left: auto; text-align: right; }
