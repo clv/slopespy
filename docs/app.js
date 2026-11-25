@@ -709,6 +709,7 @@ function buildSide(S, data, terrain, landcover, features) {
   S.footprint = [Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)];
   S.area = data.boundary ? polyArea(data.boundary, toX, toZ) : null;
   S.website = data.website || null;
+  S.osk = /^[0-9a-f]{40}$/.test(data.osk || '') ? data.osk : null;
   S.extent = Math.max((px1 - px0), (py1 - py0)) * (40075016 * Math.cos(cy * DEG) / worldPx(z));
   S.mid = ((data.top ?? hmax) + (data.base ?? hmin)) / 2;
   S.zoom = z;
@@ -1283,7 +1284,8 @@ function renderPanel(side, r, S) {
   rows.push(['Size rank', `#${r.rank} of ${INDEX.length}`, 1]);
   const links = [];
   try { const u = new URL(S?.website || ''); if (/^https?:$/.test(u.protocol)) links.push(`<a class="site" href="${esc(u.href)}" target="_blank" rel="noopener">${esc(u.hostname.replace(/^www\./, ''))} ↗</a>`); } catch {}
-  if (S) links.push(`<a class="site" href="https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent([r.name, r.region, r.countryName].filter(Boolean).join(', '))}" target="_blank" rel="noopener">Google Maps ↗</a>`);
+  if (S?.osk) links.push(`<a class="site" href="https://openskimap.org/?obj=${S.osk}" target="_blank" rel="noopener">OpenSkiMap ↗</a>`);
+  else if (S) links.push(`<a class="site" href="https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent([r.name, r.region, r.countryName].filter(Boolean).join(', '))}" target="_blank" rel="noopener">Google Maps ↗</a>`);
   $('.stats', p).innerHTML = rows.map(([k, v, x]) => `<dt${x ? ' class="x"' : ''}>${k}</dt><dd${x ? ' class="x"' : ''}>${v}</dd>`).join('')
     + (links.length ? `<dd class="site-row">${links.join('')}</dd>` : '');
   updateLegend();

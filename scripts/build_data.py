@@ -209,6 +209,7 @@ def main():
             'center': [round(v, 5) for v in p['viewportHint']['center']] if p.get('viewportHint') else [(bbox[0]+bbox[2])/2, (bbox[1]+bbox[3])/2],
             'osm': [s_['id'] for s_ in p.get('sources', []) if s_.get('type') == 'openstreetmap'][:3],
             'website': (p.get('websites') or [None])[0],
+            'osk': p['id'],  # OpenSkiMap ski-area id: openskimap.org/?obj=<id>
             'conv': p.get('runConvention') or 'europe',
         }
         index.append(entry)
