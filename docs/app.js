@@ -695,7 +695,7 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
 }
 
 // Shading: -100 darkens to black, +100 lightens to white.
-const shading = { inside: 10, outside: -67 };  // +10 lightens inside the ski area, -67 darkens outside
+const shading = { inside: 10, outside: 67 };  // lighten inside the ski area by 10%, outside by 67%
 let shadeTmp = null;
 function applyShading(G) {
   const { cv, base, mask, tex } = G, W = cv.width, H = cv.height;
