@@ -74,7 +74,7 @@ def page(e):
     url = f"{SITE}/{e['id']}"
     seo = (f'<!--seo-->\n<title>{esc(title)}</title>\n<meta name="description" content="{esc(desc)}">\n'
            f'<link rel="canonical" href="{url}">\n<meta property="og:title" content="{esc(name)} · Slope Spy">\n'
-           f'<meta property="og:url" content="{url}">\n<!--/seo-->')
+           f'<meta property="og:url" content="{url}">\n<meta property="og:description" content="{esc(desc)}">\n<!--/seo-->')
     near = nearest(e)
     country = e.get('countryName') or e['country']
     others = [o for o in by_country[country] if o is not e]

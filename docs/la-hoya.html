@@ -9,9 +9,16 @@
 <link rel="canonical" href="https://slopespy.com/la-hoya">
 <meta property="og:title" content="La Hoya · Slope Spy">
 <meta property="og:url" content="https://slopespy.com/la-hoya">
+<meta property="og:description" content="La Hoya (Chubut, Argentina) as a scale-correct 3D model: 10 km of mapped runs, 8 lifts, 658 m vertical. Compare it side by side with any of 4,000+ ski resorts.">
 <!--/seo-->
 <meta property="og:site_name" content="Slope Spy">
 <meta property="og:type" content="website">
+<meta property="og:image" content="https://slopespy.com/og.png">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="630">
+<meta property="og:image:alt" content="Two ski resorts side by side as 3D terrain models on Slope Spy">
+<meta name="twitter:card" content="summary_large_image">
+<meta name="twitter:image" content="https://slopespy.com/og.png">
 <link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
@@ -22,7 +29,10 @@
 <header>
   <a class="brand" href="./" aria-label="Slope Spy home"><img src="logo.svg" alt="" width="28" height="28"><span>Slope <b>Spy</b></span></a>
   <div class="tools">
-    <label title="Show both resorts at their real elevations instead of centring each one"><input type="checkbox" id="absElev"> True elevation</label>
+    <div class="seg elev" role="radiogroup" aria-label="Elevation">
+      <button id="elevAligned" role="radio" aria-checked="true" class="on" title="Side by side: each resort centred on its own height"></button>
+      <button id="elevTrue" role="radio" aria-checked="false" title="True elevation: both resorts at their real heights above sea level"></button>
+    </div>
     <span class="tool-btns">
       <button id="swap" class="btn icon" title="Swap the two resorts" aria-label="Swap resorts">⇄</button>
       <button id="reset" class="btn icon" title="Reset view" aria-label="Reset view"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 8a5.2 5.2 0 1 0 1.6-3.8"/><path d="M2.6 1.8v3h3"/></svg></button>
@@ -69,6 +79,7 @@
         <li>Buildings, roads, parking: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps</a> (ODbL)</li>
       </ul>
       <p class="muted">Resorts are ranked by mapped run length, so how complete each one looks depends on OpenStreetMap volunteers.</p>
+      <p class="made-by">Brought to you by <a href="https://cedarlakeventures.com/" target="_blank" rel="noopener">Cedar Lake Ventures</a>.</p>
       <!--resort--><h3>La Hoya</h3>
       <p class="resort-facts">Chubut, Argentina. 10 km of mapped runs, 8 lifts, 658 m vertical.</p>
       <h3>Compare La Hoya with</h3><ul class="links"><li><a href="#cerro-perito-moreno">Cerro Perito Moreno</a></li><li><a href="#cerro-catedral">Cerro Catedral</a></li><li><a href="#volcan-osorno">Volcán Osorno</a></li><li><a href="#cerro-bayo">Cerro Bayo</a></li><li><a href="#estacion-esqui-antillanca">Estación Esquí Antillanca</a></li><li><a href="#lago-hermoso-mountain-park">Lago Hermoso Mountain Park</a></li><li><a href="#chapelco">Chapelco Ski Resort</a></li><li><a href="#divisadero-formerly-cerro-el-fraile">Divisadero (Formerly Cerro El Fraile)</a></li><li><a href="#centro-ski-pucon">Centro Ski Pucón</a></li><li><a href="#parque-de-nieve-batea-mahuida">Parque de Nieve Batea Mahuida</a></li><li><a href="#las-araucarias-formerly-llaima">Las Araucarias (Formerly Llaima)</a></li><li><a href="#corralco">Corralco</a></li></ul>

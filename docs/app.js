@@ -262,7 +262,15 @@ function setupTools() {
     try { localStorage.setItem('sc.collapsed', collapsed ? '1' : '0'); } catch {}
   }));
   applyCollapse();
-  $('#absElev').addEventListener('change', e => { settings.absElev = e.target.checked; applyVertical(); });
+  const setElev = abs => {
+    settings.absElev = abs;
+    $('#elevAligned').classList.toggle('on', !abs); $('#elevAligned').setAttribute('aria-checked', String(!abs));
+    $('#elevTrue').classList.toggle('on', abs); $('#elevTrue').setAttribute('aria-checked', String(abs));
+    applyVertical();
+  };
+  $('#elevAligned').addEventListener('click', () => setElev(false));
+  $('#elevTrue').addEventListener('click', () => setElev(true));
+  updateElevIcons();
   window.addEventListener('resize', resize);
   updateLegend();
 }
@@ -322,6 +330,7 @@ function updateHash() {
   history.replaceState(null, '', `${BASE}${A.id}#${B.id}`);
   document.title = `${A.name} vs ${B.name} · Slope Spy`;
   try { localStorage.setItem('sc.pair', JSON.stringify([A.id, B.id])); } catch {}
+  updateElevIcons();
 }
 
 function setStatus(side, msg) {
@@ -675,6 +684,13 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
       g.fill('evenodd');
     }
     ctx.drawImage(shade, 0, 0);
+    // and lighten everything inside it by 10%
+    ctx.fillStyle = 'rgba(255,255,255,0.1)';
+    for (const poly of boundary.t === 'Polygon' ? [boundary.c] : boundary.c) {
+      ctx.beginPath();
+      for (const ring of poly) ring.forEach(([lon, lat], i) => { const x = (lon2px(lon, z) - crop[0]) * sx, y = (lat2px(lat, z) - crop[1]) * sy; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
+      ctx.fill('evenodd');
+    }
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
@@ -1135,6 +1151,30 @@ function renderPanel(side, r, S) {
   $('.stats', p).innerHTML = rows.map(([k, v, x]) => `<dt${x ? ' class="x"' : ''}>${k}</dt><dd${x ? ' class="x"' : ''}>${v}</dd>`).join('')
     + (site ? `<dd class="site-row">${site}</dd>` : '');
   updateLegend();
+}
+
+// The two elevation icons: each resort as a little peak, its height its vertical.
+// "Side by side" stands both on the same baseline; "true elevation" draws them at their real heights.
+function elevIcon(aligned) {
+  const r = sides.map(S => S.resort);
+  const W = 30, H = 18, pad = 1.5, colors = ['#4fa3ff', '#ff8a3d'];
+  const lo = r.map(x => x?.base ?? 0), hi = r.map((x, i) => x?.top ?? lo[i] + 500);
+  let y0 = Math.min(...lo), y1 = Math.max(...hi);
+  if (aligned) { y0 = 0; y1 = Math.max(hi[0] - lo[0], hi[1] - lo[1]); }
+  const sy = v => H - pad - (v - y0) / Math.max(1, y1 - y0) * (H - 2 * pad);
+  const peak = (i, cx) => {
+    const b = aligned ? 0 : lo[i], t = aligned ? hi[i] - lo[i] : hi[i];
+    const yb = sy(b), yt = Math.min(yb - 2, sy(t)), half = Math.max(4, (yb - yt) * 0.75);
+    return `<path d="M${(cx - half).toFixed(1)} ${yb.toFixed(1)} L${cx} ${yt.toFixed(1)} L${(cx + half).toFixed(1)} ${yb.toFixed(1)} Z" fill="${colors[i]}"/>`;
+  };
+  const base = aligned ? `<path d="M1 ${H - pad + .6} H${W - 1}" stroke="currentColor" stroke-width="1" opacity=".5"/>` : '';
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">${base}${peak(0, 9)}${peak(1, 21)}</svg>`;
+}
+function updateElevIcons() {
+  const A = sides[0].resort, B = sides[1].resort;
+  $('#elevAligned').innerHTML = elevIcon(true) + '<span class="sr">Side by side</span>';
+  $('#elevTrue').innerHTML = elevIcon(false) + '<span class="sr">True elevation</span>';
+  if (A && B) $('#elevTrue').title = `True elevation: ${A.name} ${fmt(A.base)}–${fmt(A.top)} m, ${B.name} ${fmt(B.base)}–${fmt(B.top)} m`;
 }
 
 function updateLegend() {

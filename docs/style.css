@@ -193,7 +193,7 @@ html.sheet-open, html.sheet-open body { overflow: hidden; overscroll-behavior: n
 .brand { display: inline-flex; align-items: center; gap: 8px; color: var(--fg); text-decoration: none; font-size: 17px; font-weight: 650; letter-spacing: .1px; white-space: nowrap; }
 .brand img { display: block; }
 .brand b { color: var(--a); font-weight: 750; }
-@media (max-width: 760px) { .brand span { display: none; } .brand img { width: 26px; height: 26px; } }
+@media (max-width: 760px) { .brand { font-size: 16px; gap: 6px; } .brand img { width: 26px; height: 26px; } }
 .about-body h3 + .links { margin-top: 2px; }
 .links { display: flex; flex-wrap: wrap; gap: 2px 12px; margin: 0; padding: 0; list-style: none; font-size: 13px; }
 .resort-facts { color: var(--muted); }
@@ -215,3 +215,23 @@ html.sheet-open, html.sheet-open body { overflow: hidden; overscroll-behavior: n
 .loading span { background: var(--panel); padding: 2px 8px; border-radius: 6px; }
 @keyframes spin { to { transform: rotate(360deg); } }
 @media (prefers-reduced-motion: reduce) { .loading i { animation-duration: 2.4s; } }
+
+/* elevation toggle: two icon buttons */
+.seg.elev button { padding: 4px 7px; display: grid; place-items: center; color: var(--muted); }
+.seg.elev button svg { display: block; }
+.seg.elev button:not(.on) svg path[fill] { opacity: .55; }
+.sr { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; }
+@media (max-width: 760px) {
+  header { flex-wrap: nowrap; }
+  .tools { flex: 0 1 auto; margin-left: auto; flex-wrap: nowrap; gap: 6px; }
+}
+.about-body .made-by { margin-top: 10px; }
+@media (max-width: 400px) {
+  header { padding: 6px 8px; gap: 6px; }
+  .brand { font-size: 15px; gap: 5px; }
+  .brand img { width: 24px; height: 24px; }
+  .tools, .tool-btns { gap: 4px; }
+  .seg.elev button { padding: 3px 4px; }
+  .seg.elev button svg { width: 25px; height: 15px; }
+  .tool-btns .btn.icon { width: 30px; }
+}
