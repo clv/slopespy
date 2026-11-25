@@ -449,7 +449,7 @@ function buildSide(S, data, terrain, landcover, features) {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, flatShading: false });
   const mppC = 40075016 * Math.cos(cy * DEG) / worldPx(z);  // metres per mercator pixel at this zoom
   if (landcover) {
-    mat.map = paintGround(landcover, features, terrain.crop, z, (px1 - px0) * mppC);
+    mat.map = paintGround(landcover, features, terrain.crop, z, (px1 - px0) * mppC, data.boundary);
     mat.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
   }
   mat.onBeforeCompile = shader => {
@@ -569,7 +569,7 @@ async function loadLandcover(id) {
 }
 
 // Paint the ground texture: land cover, then parking lots, roads and building footprints.
-function paintGround(lc, features, crop, z, widthM) {
+function paintGround(lc, features, crop, z, widthM, boundary) {
   const small = new OffscreenCanvas(lc.w, lc.h);
   const sctx = small.getContext('2d');
   const img = sctx.createImageData(lc.w, lc.h);
@@ -603,6 +603,20 @@ function paintGround(lc, features, crop, z, widthM) {
     ctx.beginPath();
     for (const [, ring] of features.b || []) { path(ring); ctx.closePath(); }
     ctx.fill();
+  }
+  if (boundary) {  // shade everything outside the ski-area boundary by 10%
+    const sx = W / (crop[2] - crop[0]), sy = H / (crop[3] - crop[1]);
+    const shade = document.createElement('canvas'); shade.width = W; shade.height = H;
+    const g = shade.getContext('2d');
+    g.fillStyle = 'rgba(0,0,0,0.1)'; g.fillRect(0, 0, W, H);
+    g.globalCompositeOperation = 'destination-out';
+    g.fillStyle = '#000';
+    for (const poly of boundary.t === 'Polygon' ? [boundary.c] : boundary.c) {
+      g.beginPath();
+      for (const ring of poly) ring.forEach(([lon, lat], i) => { const x = (lon2px(lon, z) - crop[0]) * sx, y = (lat2px(lat, z) - crop[1]) * sy; i ? g.lineTo(x, y) : g.moveTo(x, y); });
+      g.fill('evenodd');
+    }
+    ctx.drawImage(shade, 0, 0);
   }
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
