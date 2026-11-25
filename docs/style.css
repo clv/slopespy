@@ -128,7 +128,8 @@ header h1 { font-size: 14px; }
   display: grid; grid-template-columns: auto 1fr; align-items: baseline; column-gap: 6px; }
 .panel .pick:hover, .panel .pick:focus-visible { background: rgba(255,255,255,.07); outline: none; }
 .panel .pick .nm { font-weight: 650; font-size: 15px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
-.panel .pick .caret { color: var(--accent); font-size: 12px; }
+.panel .pick .srch { width: 14px; height: 14px; fill: none; stroke: var(--accent); stroke-width: 2; stroke-linecap: round; flex: none; align-self: center; }
+#reset svg { display: block; margin: 0 auto; }
 .panel .pick small { grid-column: 1 / -1; color: var(--muted); font-size: 12px; font-weight: 400; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .panel .collapse { flex: none; width: 28px; height: 28px; border: 0; background: none; border-radius: 6px; cursor: pointer; display: grid; place-items: center; }
 .panel .collapse:hover { background: rgba(255,255,255,.07); }

@@ -230,7 +230,6 @@ function setupTools() {
     try { localStorage.setItem('sc.collapsed', collapsed ? '1' : '0'); } catch {}
   }));
   applyCollapse();
-  $('#showLabels').addEventListener('change', e => { settings.labels = e.target.checked; sides.forEach(S => { if (S.labelsObj) S.labelsObj.visible = settings.labels; }); requestRender(); });
   $('#absElev').addEventListener('change', e => { settings.absElev = e.target.checked; applyVertical(); });
   window.addEventListener('resize', resize);
   updateLegend();
@@ -1044,7 +1043,7 @@ function applyVertical() {
 const fmt = (v, d = 0) => v == null || !isFinite(v) ? '–' : v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 function renderPanel(side, r, S) {
   const p = panels[side];
-  $('.pick', p).innerHTML = `<span class="nm">${esc(r.name)}</span><span class="caret" aria-hidden="true">▾</span><small>${esc([r.region, r.countryName].filter(Boolean).join(', '))}</small>`;
+  $('.pick', p).innerHTML = `<span class="nm">${esc(r.name)}</span><svg class="srch" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.8" cy="6.8" r="4.6"/><path d="m10.3 10.3 4 4"/></svg><small>${esc([r.region, r.countryName].filter(Boolean).join(', '))}</small>`;
   $('.pick', p).title = 'Choose another resort';
   const vert = r.top != null && r.base != null ? r.top - r.base : null;
   const rows = [
