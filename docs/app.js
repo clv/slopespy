@@ -273,6 +273,19 @@ function setupTools() {
   updateElevIcons();
   window.addEventListener('resize', resize);
   updateLegend();
+  // temporary shading tuner
+  let tuneQueued = false;
+  for (const k of ['inside', 'outside']) {
+    const input = $(`#tune-${k}`), out = $(`#tune-${k}-v`);
+    const show = () => { out.textContent = (shading[k] > 0 ? '+' : '') + shading[k]; };
+    input.value = shading[k]; show();
+    input.addEventListener('input', () => {
+      shading[k] = +input.value; show();
+      if (tuneQueued) return;
+      tuneQueued = true;
+      requestAnimationFrame(() => { tuneQueued = false; sides.forEach(S => S.ground && applyShading(S.ground)); requestRender(); });
+    });
+  }
 }
 
 // ---------- resort selection ----------
@@ -454,7 +467,7 @@ function disposeTree(obj) {
 function buildSide(S, data, terrain, landcover, features) {
   for (const g of [S.root, S.flat]) for (const c of [...g.children]) { g.remove(c); disposeTree(c); }
   if (hover?.S === S) setHover(null);
-  S.labelsObj = null; S.liftList = []; S.trees = null; S.buildings = null; S.placedExag = null;
+  S.labelsObj = null; S.ground = null; S.liftList = []; S.trees = null; S.buildings = null; S.placedExag = null;
   const [cx, cy] = [(data.bbox[0] + data.bbox[2]) / 2, (data.bbox[1] + data.bbox[3]) / 2];
   const kx = EARTH_R * DEG * Math.cos(cy * DEG), ky = EARTH_R * DEG;
   const toX = lon => (lon - cx) * kx, toZ = lat => -(lat - cy) * ky;
@@ -515,7 +528,8 @@ function buildSide(S, data, terrain, landcover, features) {
   const mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.95, metalness: 0, flatShading: false });
   const mppC = 40075016 * Math.cos(cy * DEG) / worldPx(z);  // metres per mercator pixel at this zoom
   if (landcover) {
-    mat.map = paintGround(landcover, features, terrain.crop, z, (px1 - px0) * mppC, data.boundary);
+    S.ground = paintGround(landcover, features, terrain.crop, z, (px1 - px0) * mppC, data.boundary);
+    mat.map = S.ground.tex;
     mat.map.anisotropy = renderer.capabilities.getMaxAnisotropy();
   }
   mat.onBeforeCompile = shader => {
@@ -671,30 +685,50 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
     for (const [, ring] of features.b || []) { path(ring); ctx.closePath(); }
     ctx.fill();
   }
-  if (boundary) {  // shade everything outside the ski-area boundary by 20%
+  // Inside/outside shading is applied on top of a saved copy, so it can be re-tuned live.
+  let mask = null;
+  if (boundary) {
     const sx = W / (crop[2] - crop[0]), sy = H / (crop[3] - crop[1]);
-    const shade = document.createElement('canvas'); shade.width = W; shade.height = H;
-    const g = shade.getContext('2d');
-    g.fillStyle = 'rgba(0,0,0,0.2)'; g.fillRect(0, 0, W, H);
-    g.globalCompositeOperation = 'destination-out';
-    g.fillStyle = '#000';
+    mask = document.createElement('canvas'); mask.width = W; mask.height = H;
+    const g = mask.getContext('2d');
+    g.fillStyle = '#fff';
     for (const poly of boundary.t === 'Polygon' ? [boundary.c] : boundary.c) {
       g.beginPath();
       for (const ring of poly) ring.forEach(([lon, lat], i) => { const x = (lon2px(lon, z) - crop[0]) * sx, y = (lat2px(lat, z) - crop[1]) * sy; i ? g.lineTo(x, y) : g.moveTo(x, y); });
       g.fill('evenodd');
     }
-    ctx.drawImage(shade, 0, 0);
-    // and lighten everything inside it by 10%
-    ctx.fillStyle = 'rgba(255,255,255,0.1)';
-    for (const poly of boundary.t === 'Polygon' ? [boundary.c] : boundary.c) {
-      ctx.beginPath();
-      for (const ring of poly) ring.forEach(([lon, lat], i) => { const x = (lon2px(lon, z) - crop[0]) * sx, y = (lat2px(lat, z) - crop[1]) * sy; i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); });
-      ctx.fill('evenodd');
-    }
   }
+  const base = document.createElement('canvas'); base.width = W; base.height = H;
+  base.getContext('2d').drawImage(cv, 0, 0);
   const tex = new THREE.CanvasTexture(cv);
   tex.colorSpace = THREE.SRGBColorSpace;
-  return tex;
+  const ground = { tex, cv, base, mask };
+  applyShading(ground);
+  return ground;
+}
+
+// Shading: -100 darkens to black, +100 lightens to white.
+const shading = { inside: 10, outside: -20 };
+let shadeTmp = null;
+function applyShading(G) {
+  const { cv, base, mask, tex } = G, W = cv.width, H = cv.height;
+  const ctx = cv.getContext('2d');
+  ctx.globalCompositeOperation = 'source-over';
+  ctx.drawImage(base, 0, 0);
+  if (mask) {
+    if (!shadeTmp || shadeTmp.width !== W || shadeTmp.height !== H) { shadeTmp = document.createElement('canvas'); shadeTmp.width = W; shadeTmp.height = H; }
+    const g = shadeTmp.getContext('2d');
+    for (const [v, op] of [[shading.outside, 'destination-out'], [shading.inside, 'destination-in']]) {
+      if (!v) continue;
+      g.globalCompositeOperation = 'copy';
+      g.fillStyle = v < 0 ? `rgba(0,0,0,${-v / 100})` : `rgba(255,255,255,${v / 100})`;
+      g.fillRect(0, 0, W, H);
+      g.globalCompositeOperation = op;
+      g.drawImage(mask, 0, 0);
+      ctx.drawImage(shadeTmp, 0, 0);
+    }
+  }
+  tex.needsUpdate = true;
 }
 
 // Conifer-ish cones scattered over WorldCover tree pixels.
@@ -1157,18 +1191,23 @@ function renderPanel(side, r, S) {
 // "Side by side" stands both on the same baseline; "true elevation" draws them at their real heights.
 function elevIcon(aligned) {
   const r = sides.map(S => S.resort);
-  const W = 30, H = 18, pad = 1.5, colors = ['#4fa3ff', '#ff8a3d'];
+  const W = 30, H = 18, pad = 1, colors = ['#4fa3ff', '#ff8a3d'];
   const lo = r.map(x => x?.base ?? 0), hi = r.map((x, i) => x?.top ?? lo[i] + 500);
   let y0 = Math.min(...lo), y1 = Math.max(...hi);
   if (aligned) { y0 = 0; y1 = Math.max(hi[0] - lo[0], hi[1] - lo[1]); }
   const sy = v => H - pad - (v - y0) / Math.max(1, y1 - y0) * (H - 2 * pad);
-  const peak = (i, cx) => {
-    const b = aligned ? 0 : lo[i], t = aligned ? hi[i] - lo[i] : hi[i];
-    const yb = sy(b), yt = Math.min(yb - 2, sy(t)), half = Math.max(4, (yb - yt) * 0.75);
-    return `<path d="M${(cx - half).toFixed(1)} ${yb.toFixed(1)} L${cx} ${yt.toFixed(1)} L${(cx + half).toFixed(1)} ${yb.toFixed(1)} Z" fill="${colors[i]}"/>`;
+  const f = n => n.toFixed(1);
+  // a little massif: main peak, a shoulder and a lower secondary peak, with a snowcap
+  const mountain = (i, cx) => {
+    const yb = sy(aligned ? 0 : lo[i]), yt = Math.min(yb - 3, sy(aligned ? hi[i] - lo[i] : hi[i]));
+    const h = yb - yt, w = Math.max(5, Math.min(7.5, h * 0.8));
+    const at = (dx, k) => `${f(cx + dx * w)} ${f(yb - k * h)}`;
+    const ridge = `M${at(-1, 0)} L${at(-0.62, 0.42)} L${at(-0.45, 0.33)} L${at(-0.12, 1)} L${at(0.18, 0.62)} L${at(0.34, 0.74)} L${at(1, 0)} Z`;
+    const snow = h > 5 ? `<path d="M${at(-0.12, 1)} L${at(-0.3, 0.72)} L${at(-0.19, 0.78)} L${at(-0.1, 0.7)} L${at(0.02, 0.8)} Z" fill="#fff" opacity=".92"/>` : '';
+    return `<path d="${ridge}" fill="${colors[i]}" stroke="#0f1419" stroke-width=".6" stroke-linejoin="round"/>${snow}`;
   };
-  const base = aligned ? `<path d="M1 ${H - pad + .6} H${W - 1}" stroke="currentColor" stroke-width="1" opacity=".5"/>` : '';
-  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">${base}${peak(0, 9)}${peak(1, 21)}</svg>`;
+  const base = aligned ? `<path d="M1 ${H - pad + .4} H${W - 1}" stroke="currentColor" stroke-width="1" opacity=".5"/>` : '';
+  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}" aria-hidden="true">${mountain(1, 20.5)}${mountain(0, 9.5)}${base}</svg>`;
 }
 function updateElevIcons() {
   const A = sides[0].resort, B = sides[1].resort;
