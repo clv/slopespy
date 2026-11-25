@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<!--seo-->
+<title>Stacja Narciarska Kaniówka in 3D · compare with any ski resort · Slope Spy</title>
+<meta name="description" content="Stacja Narciarska Kaniówka (Lesser Poland Voivodeship, Poland) as a scale-correct 3D model: 1 km of mapped runs, 5 lifts, 98 m vertical. Compare it side by side with any of 4,000+ ski resorts.">
+<link rel="canonical" href="https://slopespy.com/stacja-narciarska-kaniowka">
+<meta property="og:title" content="Stacja Narciarska Kaniówka · Slope Spy">
+<meta property="og:url" content="https://slopespy.com/stacja-narciarska-kaniowka">
+<!--/seo-->
+<meta property="og:site_name" content="Slope Spy">
+<meta property="og:type" content="website">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }
+</script>
+</head>
+<body>
+<header>
+  <a class="brand" href="./" aria-label="Slope Spy home"><img src="logo.svg" alt="" width="28" height="28"><span>Slope <b>Spy</b></span></a>
+  <div class="tools">
+    <label title="Show both resorts at their real elevations instead of centring each one"><input type="checkbox" id="absElev"> True elevation</label>
+    <span class="tool-btns">
+      <button id="swap" class="btn icon" title="Swap the two resorts" aria-label="Swap resorts">⇄</button>
+      <button id="reset" class="btn icon" title="Reset view" aria-label="Reset view"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 8a5.2 5.2 0 1 0 1.6-3.8"/><path d="M2.6 1.8v3h3"/></svg></button>
+      <button id="infoBtn" class="btn icon" title="About and data credits" aria-label="About and data credits">i</button>
+    </span>
+  </div>
+</header>
+<main id="stage">
+  <canvas id="c"></canvas>
+  <div class="divider"></div>
+  <section class="panel" data-side="0"><div class="title"><button class="pick" aria-haspopup="dialog"></button><button class="collapse" aria-label="Show or hide details"><span class="chev"></span></button></div><dl class="stats"></dl><div class="status"></div></section>
+  <section class="panel" data-side="1"><div class="title"><button class="pick" aria-haspopup="dialog"></button><button class="collapse" aria-label="Show or hide details"><span class="chev"></span></button></div><dl class="stats"></dl><div class="status"></div></section>
+  <div id="navctl">
+    <button id="compass" title="Point north up" aria-label="Point north up"><svg viewBox="0 0 40 40" aria-hidden="true"><g class="needle"><path d="M20 9 25.5 21h-11z" fill="#e5484d"/><path d="M20 33 14.5 21h11z" fill="#c9d1d9"/><text x="20" y="7.5" text-anchor="middle" font-size="8" font-weight="700" fill="currentColor">N</text></g></svg></button>
+    <button id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+    <button id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+  </div>
+  <div id="scalebar"><div class="bar"></div><span></span></div>
+  <div id="legend"></div>
+  <button id="credit" type="button">© OpenStreetMap · ESA · Overture</button>
+</main>
+<div id="picker" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Choose a resort">
+    <div class="sheet-head">
+      <input id="q" type="search" placeholder="Search 4,000+ resorts…" autocomplete="off" spellcheck="false" aria-label="Search resorts" enterkeyhint="go">
+      <button id="pickClose" class="btn icon" aria-label="Close">✕</button>
+    </div>
+    <div class="pop-head"><label>Sort <select id="sort" aria-label="Sort resorts"></select></label><span class="count"></span></div>
+    <ul class="results" role="listbox"></ul>
+  </div>
+</div>
+<div id="about" class="sheet modal" hidden>
+  <div class="sheet-card about" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <div class="sheet-head"><h2 id="aboutTitle">About Slope Spy</h2><button id="aboutClose" class="btn icon" aria-label="Close">✕</button></div>
+    <div class="about-body">
+      <p>Two ski resorts, side by side, at exactly the same scale: both halves share one camera, so a kilometre on the left is a kilometre on the right. Tap a resort's name to pick another.</p>
+      <p>Drag to orbit, right-drag or two fingers to pan, scroll or pinch to zoom. Hover or tap a lift for details.</p>
+      <p>Heights are drawn at 2× so slopes read clearly. Trees and buildings stay at their true height.</p>
+      <h3>Data</h3>
+      <ul>
+        <li>Ski areas, runs, lifts: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL), via <a href="https://openskimap.org" target="_blank" rel="noopener">OpenSkiMap</a></li>
+        <li>Terrain: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a> (SRTM, USGS 3DEP, Copernicus and others; <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener">attribution</a>)</li>
+        <li>Trees and land cover: <a href="https://esa-worldcover.org" target="_blank" rel="noopener">© ESA WorldCover project 2021</a> (CC BY 4.0)</li>
+        <li>Buildings, roads, parking: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps</a> (ODbL)</li>
+      </ul>
+      <p class="muted">Resorts are ranked by mapped run length, so how complete each one looks depends on OpenStreetMap volunteers.</p>
+      <!--resort--><h3>Stacja Narciarska Kaniówka</h3>
+      <p class="resort-facts">Lesser Poland Voivodeship, Poland. 1 km of mapped runs, 5 lifts, 98 m vertical.</p>
+      <h3>Compare Stacja Narciarska Kaniówka with</h3><ul class="links"><li><a href="#stacja-narciarska-hornikow-wierch">Stacja narciarska Horników wierch</a></li><li><a href="#rusin-ski">Rusiń-Ski</a></li><li><a href="#osrodek-narciarski-kotelnica-biaczanska">Ośrodek Narciarski Kotelnica Białczańska</a></li><li><a href="#stacja-narciarska-kotelnica-biaczanska">Stacja Narciarska Kotelnica Białczańska</a></li><li><a href="#koziniec-ski">Koziniec SKI</a></li><li><a href="#bania-ski">Bania Ski</a></li><li><a href="#grapa-ski-czarna-gora">Grapa SKI Czarna Góra</a></li><li><a href="#wysoki-wierch">Wysoki Wierch</a></li><li><a href="#sami-swoi">Sami Swoi</a></li><li><a href="#stacja-narciarska-mae-ciche">Stacja narciarska Małe Ciche</a></li><li><a href="#jurgow-ski">Jurgów Ski</a></li><li><a href="#murzasichle">Murzasichle</a></li></ul>
+      <h3>Ski resorts in Poland</h3><ul class="links"><li><a href="art-ski">Art-Ski</a></li><li><a href="aramow">Arłamów</a></li><li><a href="bania-ski">Bania Ski</a></li><li><a href="beskid">Beskid</a></li><li><a href="beskid-sport-arena">Beskid Sport Arena</a></li><li><a href="beskidek">Beskidek</a></li><li><a href="bieszczad-ski-wankowa">Bieszczad Ski Wańkowa</a></li><li><a href="centrum-szkolen-narciarskich-nosal">Centrum Szkoleń Narciarskich NOSAL</a></li><li><a href="cieniawa">Cieniawa</a></li><li><a href="cienkow">Cieńków</a></li><li><a href="cisowa-stacja-narciarska">CISOWA - stacja narciarska</a></li><li><a href="cos-szczyrk">COS Szczyrk</a></li><li><a href="cypisek">Cypisek</a></li><li><a href="czantoria">Czantoria</a></li><li><a href="czarna-gora">Czarna Góra</a></li><li><a href="czorsztyn-ski-kluszkowce">Czorsztyn-Ski Kluszkowce</a></li><li><a href="dwie-doliny-muszyna-wierchomla">Dwie Doliny Muszyna-Wierchomla</a></li><li><a href="dzikowiec">Dzikowiec</a></li><li><a href="debowiec">Dębowiec</a></li><li><a href="duga-polana">Długa Polana</a></li><li><a href="globus-ski">Globus Ski</a></li><li><a href="grapa-ski-czarna-gora">Grapa SKI Czarna Góra</a></li><li><a href="gubaowka">Gubałówka</a></li><li><a href="gora-czterech-wiatrow-g4w">Góra Czterech Wiatrów G4W</a></li><li><a href="gora-kamiensk">Góra Kamieńsk</a></li><li><a href="gora-zar">Góra Żar</a></li><li><a href="gorka-srodulska">Górka Środulska</a></li><li><a href="harenda">Harenda</a></li><li><a href="henryk-ski">Henryk Ski</a></li><li><a href="jastrzebia">Jastrzębia</a></li><li><a href="jaworzyna-krynicka">Jaworzyna Krynicka</a></li><li><a href="jugow-park">Jugow Park</a></li><li><a href="jurasowka">Jurasówka</a></li><li><a href="jurgow-ski">Jurgów Ski</a></li><li><a href="kalnica">Kalnica</a></li><li><a href="kamienica-bolesawow">Kamienica/Bolesławów</a></li><li><a href="karpacz-ski-arena">Karpacz Ski Arena</a></li><li><a href="kasina-ski">Kasina SKI</a></li><li><a href="kasprowy-wierch">Kasprowy Wierch</a></li><li><a href="kiczera-ski">Kiczera Ski</a></li><li><a href="klepki">Klepki</a></li><li><a href="kocierz">Kocierz</a></li><li><a href="kokuszka">Kokuszka</a></li><li><a href="kolej-baba">Kolej Baba</a></li><li><a href="kompleks-narciarski-biay-krzyz">Kompleks Narciarski Biały Krzyż</a></li><li><a href="kompleks-pilsko-jontek">Kompleks Pilsko-Jontek</a></li><li><a href="koszakowo">Koszałkowo</a></li><li><a href="koziniec-ski">Koziniec SKI</a></li><li><a href="lesko-ski">Lesko-Ski</a></li><li><a href="limanowa">Limanowa</a></li><li><a href="lipki">Lipki</a></li><li><a href="lubomierz">Lubomierz</a></li><li><a href="magura-skipark">Magura Skipark</a></li><li><a href="malta-ski">Malta Ski</a></li><li><a href="mareszka">Mareszka</a></li><li><a href="master-ski-pl">Master Ski</a></li><li><a href="master-ski">Master-Ski</a></li><li><a href="mosorny-gron">Mosorny Groń</a></li><li><a href="murzasichle">Murzasichle</a></li><li><a href="myslecinek">Myślęcinek</a></li><li><a href="na-stoku">Na Stoku</a></li><li><a href="nartraj">Nartraj</a></li><li><a href="nowa-morawa">Nowa Morawa</a></li><li><a href="nowa-osada">Nowa Osada</a></li><li><a href="nowy-gieratow">Nowy Gierałtów</a></li><li><a href="obidowa">Obidowa</a></li><li><a href="okragla-gorka">Okrągla Górka</a></li><li><a href="osmelakowa-dolina">Osmelakowa Dolina</a></li><li><a href="osrodek-bystre">Osrodek Bystre</a></li><li><a href="osrodek-narciarski-nart-sport">Ośrodek Narciarski &quot;Nart-Sport&quot;</a></li><li><a href="osrodek-narciarski-kotelnica-biaczanska">Ośrodek Narciarski Kotelnica Białczańska</a></li><li><a href="osrodek-narciarski-kurza-gora">Ośrodek Narciarski Kurza Góra</a></li><li><a href="osrodek-narciarski-niestachow">Ośrodek Narciarski Niestachów</a></li><li><a href="osrodek-narciarski-trzepowo">Ośrodek Narciarski Trzepowo</a></li><li><a href="osrodek-narciarski-za-groniem">Ośrodek narciarski „Za Groniem”</a></li><li><a href="palenica">Palenica</a></li><li><a href="park-szczesliwice">Park Szczęśliwice</a></li><li><a href="partecznik">Partecznik</a></li><li><a href="pasieki">Pasieki</a></li><li><a href="piast">Piast</a></li><li><a href="pierscienica-kielce">Pierścienica – Kielce</a></li><li><a href="pietkiewiczowka">Pietkiewiczówka</a></li><li><a href="piekna-gora">Piękna Góra</a></li><li><a href="polana-sosny">Polana Sosny</a></li><li><a href="polana-szymoszkowa">Polana Szymoszkowa</a></li><li><a href="polanki">Polanki</a></li><li><a href="poniwiec">Poniwiec</a></li><li><a href="przedszkole-narciarskie">Przedszkole narciarskie</a></li><li><a href="przemysl">Przemyśl</a></li><li><a href="przeecz-sokola">Przełęcz Sokola</a></li><li><a href="rusin-ski">Rusiń-Ski</a></li><li><a href="sami-swoi">Sami Swoi</a></li><li><a href="siepraw">Siepraw</a></li><li><a href="siglany">Siglany</a></li><li><a href="skalanka">Skalanka</a></li><li><a href="ski-park-rajcza">Ski Park Rajcza</a></li><li><a href="ski-sun">Ski&amp;Sun</a></li><li><a href="skiresort-cerna-hora-pec">Skiresort Černá Hora-Pec</a></li><li><a href="smerekowiec">Smerekowiec</a></li><li><a href="sport-arena-myslenice">Sport Arena Myślenice</a></li><li><a href="stacja-narciarska-czarny-gron">Stacja Narciarska Czarny Groń</a></li><li><a href="stacja-narciarska-hornikow-wierch">Stacja narciarska Horników wierch</a></li><li><a href="stacja-narciarska-kazimierz-dolny">Stacja Narciarska Kazimierz Dolny</a></li><li><a href="stacja-narciarska-kotelnica-biaczanska">Stacja Narciarska Kotelnica Białczańska</a></li><li><a href="stacja-narciarska-laskowa-kamionna">Stacja Narciarska Laskowa-Kamionna</a></li><li><a href="stacja-narciarska-mae-ciche">Stacja narciarska Małe Ciche</a></li><li><a href="stacja-narciarska-rybno">Stacja narciarska Rybno</a></li><li><a href="stacja-narciarska-sabat-krajno">Stacja Narciarska Sabat Krajno</a></li><li><a href="stacja-narciarska-skolnity">Stacja Narciarska Skolnity</a></li><li><a href="stacja-narciarska-suche">Stacja narciarska Suche</a></li><li><a href="stacja-narciarska-swiniorka">Stacja Narciarska Świniorka</a></li><li><a href="stajkowa">Stajkowa</a></li><li><a href="stary-gron">Stary Groń</a></li><li><a href="stok">Stok</a></li><li><a href="stok-bobliwo">Stok Bobliwo</a></li><li><a href="stok-narciarski-biaa-gora">Stok Narciarski &quot;Biała Góra&quot;</a></li><li><a href="stok-narciarski-w-stobiernej">Stok narciarski w Stobiernej</a></li><li><a href="superstacja-czarnow-ski-pisarzowice">Superstacja Czarnów-Ski Pisarzowice</a></li><li><a href="szczyrk-mountain">Szczyrk Mountain Resort</a></li><li><a href="szklana-gora-ski">Szklana Góra Ski</a></li><li><a href="szrenica-ski-arena">Szrenica Ski Arena</a></li><li><a href="szwajcaria-batowska">Szwajcaria Bałtowska</a></li><li><a href="szyndzielnia">Szyndzielnia</a></li><li><a href="sawicski-raj">SławicSki Raj</a></li><li><a href="sotwiny-arena">Słotwiny Arena</a></li><li><a href="sotwiny-ski">Słotwiny Ski</a></li><li><a href="telegraf-kielce">Telegraf Kielce</a></li><li><a href="toboow">Tobołów</a></li><li><a href="tumlin-sport-ski">Tumlin Sport Ski</a></li><li><a href="tylicz-ski">Tylicz-Ski</a></li><li><a href="u-zura">U Żura</a></li><li><a href="uboc">UBOC</a></li><li><a href="winterpol-karpacz-biay-jar">Winterpol Karpacz Biały Jar</a></li><li><a href="witow-ski">Witów-Ski</a></li><li><a href="wyciagi-baca">Wyciągi Baca</a></li><li><a href="wyciagi-wojtek">Wyciągi Wojtek</a></li><li><a href="wysoki-wierch">Wysoki Wierch</a></li><li><a href="zagron">Zagroń</a></li><li><a href="zieleniec">Zieleniec</a></li><li><a href="zwardon-ski">Zwardoń Ski</a></li><li><a href="ysa-gora">Łysa Góra</a></li><li><a href="zowik">Żółwik</a></li></ul>
+      <p><a href="resorts">Browse all ski resorts</a></p><!--/resort-->
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

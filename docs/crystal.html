@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
+<!--seo-->
+<title>Crystal in 3D · compare with any ski resort · Slope Spy</title>
+<meta name="description" content="Crystal (Samtskhe-Javakheti, Georgia) as a scale-correct 3D model: 8 km of mapped runs, 4 lifts, 531 m vertical. Compare it side by side with any of 4,000+ ski resorts.">
+<link rel="canonical" href="https://slopespy.com/crystal">
+<meta property="og:title" content="Crystal · Slope Spy">
+<meta property="og:url" content="https://slopespy.com/crystal">
+<!--/seo-->
+<meta property="og:site_name" content="Slope Spy">
+<meta property="og:type" content="website">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="style.css">
+<script type="importmap">
+{ "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }
+</script>
+</head>
+<body>
+<header>
+  <a class="brand" href="./" aria-label="Slope Spy home"><img src="logo.svg" alt="" width="28" height="28"><span>Slope <b>Spy</b></span></a>
+  <div class="tools">
+    <label title="Show both resorts at their real elevations instead of centring each one"><input type="checkbox" id="absElev"> True elevation</label>
+    <span class="tool-btns">
+      <button id="swap" class="btn icon" title="Swap the two resorts" aria-label="Swap resorts">⇄</button>
+      <button id="reset" class="btn icon" title="Reset view" aria-label="Reset view"><svg viewBox="0 0 16 16" width="15" height="15" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M2.8 8a5.2 5.2 0 1 0 1.6-3.8"/><path d="M2.6 1.8v3h3"/></svg></button>
+      <button id="infoBtn" class="btn icon" title="About and data credits" aria-label="About and data credits">i</button>
+    </span>
+  </div>
+</header>
+<main id="stage">
+  <canvas id="c"></canvas>
+  <div class="divider"></div>
+  <section class="panel" data-side="0"><div class="title"><button class="pick" aria-haspopup="dialog"></button><button class="collapse" aria-label="Show or hide details"><span class="chev"></span></button></div><dl class="stats"></dl><div class="status"></div></section>
+  <section class="panel" data-side="1"><div class="title"><button class="pick" aria-haspopup="dialog"></button><button class="collapse" aria-label="Show or hide details"><span class="chev"></span></button></div><dl class="stats"></dl><div class="status"></div></section>
+  <div id="navctl">
+    <button id="compass" title="Point north up" aria-label="Point north up"><svg viewBox="0 0 40 40" aria-hidden="true"><g class="needle"><path d="M20 9 25.5 21h-11z" fill="#e5484d"/><path d="M20 33 14.5 21h11z" fill="#c9d1d9"/><text x="20" y="7.5" text-anchor="middle" font-size="8" font-weight="700" fill="currentColor">N</text></g></svg></button>
+    <button id="zoomIn" title="Zoom in" aria-label="Zoom in">+</button>
+    <button id="zoomOut" title="Zoom out" aria-label="Zoom out">−</button>
+  </div>
+  <div id="scalebar"><div class="bar"></div><span></span></div>
+  <div id="legend"></div>
+  <button id="credit" type="button">© OpenStreetMap · ESA · Overture</button>
+</main>
+<div id="picker" class="sheet" hidden>
+  <div class="sheet-card" role="dialog" aria-modal="true" aria-label="Choose a resort">
+    <div class="sheet-head">
+      <input id="q" type="search" placeholder="Search 4,000+ resorts…" autocomplete="off" spellcheck="false" aria-label="Search resorts" enterkeyhint="go">
+      <button id="pickClose" class="btn icon" aria-label="Close">✕</button>
+    </div>
+    <div class="pop-head"><label>Sort <select id="sort" aria-label="Sort resorts"></select></label><span class="count"></span></div>
+    <ul class="results" role="listbox"></ul>
+  </div>
+</div>
+<div id="about" class="sheet modal" hidden>
+  <div class="sheet-card about" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
+    <div class="sheet-head"><h2 id="aboutTitle">About Slope Spy</h2><button id="aboutClose" class="btn icon" aria-label="Close">✕</button></div>
+    <div class="about-body">
+      <p>Two ski resorts, side by side, at exactly the same scale: both halves share one camera, so a kilometre on the left is a kilometre on the right. Tap a resort's name to pick another.</p>
+      <p>Drag to orbit, right-drag or two fingers to pan, scroll or pinch to zoom. Hover or tap a lift for details.</p>
+      <p>Heights are drawn at 2× so slopes read clearly. Trees and buildings stay at their true height.</p>
+      <h3>Data</h3>
+      <ul>
+        <li>Ski areas, runs, lifts: © <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap contributors</a> (ODbL), via <a href="https://openskimap.org" target="_blank" rel="noopener">OpenSkiMap</a></li>
+        <li>Terrain: <a href="https://registry.opendata.aws/terrain-tiles/" target="_blank" rel="noopener">AWS Terrain Tiles</a> (SRTM, USGS 3DEP, Copernicus and others; <a href="https://github.com/tilezen/joerd/blob/master/docs/attribution.md" target="_blank" rel="noopener">attribution</a>)</li>
+        <li>Trees and land cover: <a href="https://esa-worldcover.org" target="_blank" rel="noopener">© ESA WorldCover project 2021</a> (CC BY 4.0)</li>
+        <li>Buildings, roads, parking: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps</a> (ODbL)</li>
+      </ul>
+      <p class="muted">Resorts are ranked by mapped run length, so how complete each one looks depends on OpenStreetMap volunteers.</p>
+      <!--resort--><h3>Crystal</h3>
+      <p class="resort-facts">Samtskhe-Javakheti, Georgia. 8 km of mapped runs, 4 lifts, 531 m vertical.</p>
+      <h3>Compare Crystal with</h3><ul class="links"><li><a href="#kokhta-mitarbi">Kokhta - Mitarbi</a></li><li><a href="#didveli">Didveli</a></li><li><a href="#goderdzi-mountain">Goderdzi Mountain Resort</a></li><li><a href="#resort-ru-5b8e63">Мамисон</a></li><li><a href="#gudauri">Gudauri (გუდაური)</a></li><li><a href="#resort-ru-297862">Цей</a></li><li><a href="#tetnuldi">Tetnuldi</a></li><li><a href="#myler-mountain">Myler Mountain Resort</a></li><li><a href="#hatsvali">Hatsvali</a></li><li><a href="#tsaghkadzor">Tsaghkadzor Ski resort (Ծաղկաձոր լեռնադահուկային առողջարան)</a></li><li><a href="#sarkams-cbltepe">Sarıkamış Cıbıltepe</a></li><li><a href="#cheget">Cheget (Чегет)</a></li></ul>
+      <h3>Ski resorts in Georgia</h3><ul class="links"><li><a href="didveli">Didveli</a></li><li><a href="goderdzi-mountain">Goderdzi Mountain Resort</a></li><li><a href="gudauri">Gudauri (გუდაური)</a></li><li><a href="hatsvali">Hatsvali</a></li><li><a href="kokhta-mitarbi">Kokhta - Mitarbi</a></li><li><a href="tetnuldi">Tetnuldi</a></li></ul>
+      <p><a href="resorts">Browse all ski resorts</a></p><!--/resort-->
+    </div>
+  </div>
+</div>
+
+<script type="module" src="app.js"></script>
+</body>
+</html>

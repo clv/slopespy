@@ -59,7 +59,8 @@ def clean_name(n):
 def slug(s):
     s = unicodedata.normalize('NFKD', s).encode('ascii', 'ignore').decode()
     s = re.sub(r'[^a-zA-Z0-9]+', '-', s).strip('-').lower()
-    return s or 'resort'
+    short = re.sub(r'-(ski-)?(resort|area|centre|center)$', '', s)  # sugar-bowl-resort -> sugar-bowl
+    return (short if len(short) >= 3 else s) or 'resort'
 
 
 def rnd(coords):

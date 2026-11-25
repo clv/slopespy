@@ -8,7 +8,29 @@ import { LineMaterial } from 'three/addons/lines/LineMaterial.js';
 const RESORT_DIR = window.RESORT_DIR || 'data/resorts'; // the Artifact build uses single-file bundles in data/r
 const EARTH_R = 6371008.8;               // mean Earth radius (m), used for local metric coordinates
 const DEG = Math.PI / 180;
+// Terrain tiles come from the public AWS bucket, which sends no cache headers, so we keep our own
+// copy in the browser's Cache Storage: repeat visits load tiles locally instead of refetching them.
 const TILE_URL = (z, x, y) => `https://s3.amazonaws.com/elevation-tiles-prod/terrarium/${z}/${x}/${y}.png`;
+const TILE_CACHE = 'terrain-v1', TILE_CACHE_MAX = 4000;   // about 300-400 MB at most
+let tileCache$ = null, tilePuts = 0;
+async function fetchTileResponse(z, x, y) {
+  const url = TILE_URL(z, x, y);
+  // Cache Storage can be missing or blocked (private windows, some browsers): then just fetch
+  tileCache$ ??= (self.caches ? caches.open(TILE_CACHE) : Promise.reject()).catch(() => null);
+  const cache = await tileCache$;
+  const hit = cache && await cache.match(url).catch(() => null);
+  if (hit) return hit;
+  const res = await fetch(url, { mode: 'cors' });
+  if (res.ok && cache) {
+    cache.put(url, res.clone()).catch(() => {});
+    if (++tilePuts % 200 === 0) trimTileCache(cache).catch(() => {});
+  }
+  return res;
+}
+async function trimTileCache(cache) {  // drop the oldest tiles once the cache gets big
+  const keys = await cache.keys();
+  for (const k of keys.slice(0, Math.max(0, keys.length - TILE_CACHE_MAX))) await cache.delete(k);
+}
 const MAX_TILES = 64;                     // per resort; picks the highest zoom that fits
 const MAX_ZOOM = 14;                      // ~7-10 m/pixel at ski-resort latitudes
 const MAX_SEGMENTS = (matchMedia('(pointer: coarse)').matches || innerWidth < 800) ? 420 : 768; // mesh resolution cap per side
@@ -78,9 +100,15 @@ async function init() {
   INDEX.forEach(r => { byId.set(r.id, r); r._s = norm([r.name, r.fullName, r.countryName, r.region, r.country].join(' ')); });
   setupPickers();
   setupTools();
-  const h = new URLSearchParams(location.hash.slice(1));
-  const a = byId.has(h.get('a')) ? h.get('a') : 'whistler-blackcomb';
-  const b = byId.has(h.get('b')) ? h.get('b') : 'vail';
+  // URL: /<first-resort>#<second-resort>   (old links: #a=<id>&b=<id>)
+  let { a, b } = parseUrl();
+  a = a || 'whistler-blackcomb';
+  b = b && b !== a ? b : (a === 'vail' ? 'whistler-blackcomb' : 'vail');
+  window.addEventListener('hashchange', () => {
+    const { b } = parseUrl();
+    window.closeAbout?.();
+    if (b && b !== sides[1].resort?.id) selectResort(1, b);
+  });
   resize();
   await Promise.all([selectResort(0, a, false), selectResort(1, b, false)]);
   fitCamera();
@@ -275,9 +303,20 @@ async function selectResort(side, id, refit = true) {
   }
 }
 
+const BASE = location.pathname.replace(/[^/]*$/, '');
+function parseUrl() {
+  const seg = decodeURIComponent(location.pathname.slice(BASE.length)).replace(/\.html$/, '');
+  const frag = decodeURIComponent(location.hash.slice(1));
+  let a = byId.has(seg) ? seg : null, b = null;
+  if (frag.includes('=')) { const h = new URLSearchParams(frag); a = a || (byId.has(h.get('a')) ? h.get('a') : null); b = h.get('b'); }
+  else b = frag;
+  return { a, b: byId.has(b) ? b : null };
+}
 function updateHash() {
-  const a = sides[0].resort?.id, b = sides[1].resort?.id;
-  if (a && b) history.replaceState(null, '', `#a=${a}&b=${b}`);
+  const A = sides[0].resort, B = sides[1].resort;
+  if (!A || !B) return;
+  history.replaceState(null, '', `${BASE}${A.id}#${B.id}`);
+  document.title = `${A.name} vs ${B.name} · Slope Spy`;
 }
 
 function setStatus(side, msg) { $('.status', panels[side]).textContent = msg; }
@@ -288,7 +327,7 @@ function fetchTile(z, x, y) {
   const key = `${z}/${x}/${y}`;
   if (!tileCache.has(key)) {
     tileCache.set(key, (async () => {
-      const res = await fetch(TILE_URL(z, x, y), { mode: 'cors' });
+      const res = await fetchTileResponse(z, x, y);
       if (!res.ok) throw new Error(`tile ${key}: HTTP ${res.status}`);
       const bmp = await createImageBitmap(await res.blob(), { colorSpaceConversion: 'none', premultiplyAlpha: 'none' });
       const c = new OffscreenCanvas(256, 256);

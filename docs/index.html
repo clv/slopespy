@@ -3,8 +3,16 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, viewport-fit=cover">
-<title>Ski Resort Scale Compare</title>
-<meta name="description" content="Compare ski resorts side by side as scale-correct 3D terrain models, from OpenStreetMap and open elevation data.">
+<!--seo-->
+<title>Slope Spy · Compare ski resorts side by side in 3D</title>
+<meta name="description" content="Compare any two of 4,000+ ski resorts side by side as scale-correct 3D terrain, with runs, lifts, trees and buildings.">
+<link rel="canonical" href="https://slopespy.com/">
+<meta property="og:title" content="Slope Spy · Compare ski resorts side by side in 3D">
+<meta property="og:url" content="https://slopespy.com/">
+<!--/seo-->
+<meta property="og:site_name" content="Slope Spy">
+<meta property="og:type" content="website">
+<link rel="icon" href="favicon.svg" type="image/svg+xml">
 <link rel="stylesheet" href="style.css">
 <script type="importmap">
 { "imports": { "three": "./vendor/three.module.min.js", "three/addons/": "./vendor/addons/" } }
@@ -12,7 +20,7 @@
 </head>
 <body>
 <header>
-  <h1>Ski Resort Scale Compare</h1>
+  <a class="brand" href="./" aria-label="Slope Spy home"><img src="logo.svg" alt="" width="28" height="28"><span>Slope <b>Spy</b></span></a>
   <div class="tools">
     <label title="Show both resorts at their real elevations instead of centring each one"><input type="checkbox" id="absElev"> True elevation</label>
     <span class="tool-btns">
@@ -48,7 +56,7 @@
 </div>
 <div id="about" class="sheet modal" hidden>
   <div class="sheet-card about" role="dialog" aria-modal="true" aria-labelledby="aboutTitle">
-    <div class="sheet-head"><h2 id="aboutTitle">About</h2><button id="aboutClose" class="btn icon" aria-label="Close">✕</button></div>
+    <div class="sheet-head"><h2 id="aboutTitle">About Slope Spy</h2><button id="aboutClose" class="btn icon" aria-label="Close">✕</button></div>
     <div class="about-body">
       <p>Two ski resorts, side by side, at exactly the same scale: both halves share one camera, so a kilometre on the left is a kilometre on the right. Tap a resort's name to pick another.</p>
       <p>Drag to orbit, right-drag or two fingers to pan, scroll or pinch to zoom. Hover or tap a lift for details.</p>
@@ -61,6 +69,7 @@
         <li>Buildings, roads, parking: <a href="https://overturemaps.org" target="_blank" rel="noopener">Overture Maps</a> (ODbL)</li>
       </ul>
       <p class="muted">Resorts are ranked by mapped run length, so how complete each one looks depends on OpenStreetMap volunteers.</p>
+      <!--resort--><p><a href="resorts">Browse all ski resorts</a></p><!--/resort-->
     </div>
   </div>
 </div>
