@@ -119,54 +119,30 @@ async function init() {
 }
 
 // ---------- resort picker (one sheet, opened from either resort card) ----------
-const SORTS = {
-  region: { label: 'Continent › country', get: null },
-  name:   { label: 'Name (A–Z)', get: r => r.name, asc: true },
-  runKm:  { label: 'Run length', get: r => r.runKm, fmt: v => `${fmt(v)} km` },
-  nRuns:  { label: 'Number of runs', get: r => r.nRuns, fmt: v => `${fmt(v)} runs` },
-  vert:   { label: 'Vertical', get: r => r.vert, fmt: v => `${fmt(v)} m` },
-  lifts:  { label: 'Lifts', get: r => r.lifts, fmt: v => `${fmt(v)} lifts` },
-  top:    { label: 'Top elevation', get: r => r.top, fmt: v => `${fmt(v)} m` },
-  base:   { label: 'Base elevation', get: r => r.base, fmt: v => `${fmt(v)} m` },
-};
-const CONT_ORDER = ['Europe', 'North America', 'Asia', 'Oceania', 'South America', 'Africa', 'Other'];
-let sortKey = 'region';
-try { sortKey = localStorage.getItem('sc.sort') || 'region'; if (!SORTS[sortKey]) sortKey = 'region'; } catch {}
-
-function sortedIndex(items) {
-  const s = SORTS[sortKey];
-  if (sortKey === 'region') {
-    return items.slice().sort((a, b) => (CONT_ORDER.indexOf(a.cont) - CONT_ORDER.indexOf(b.cont))
-      || (a.countryName || a.country || '').localeCompare(b.countryName || b.country || '')
-      || a.name.localeCompare(b.name));
-  }
-  return items.slice().sort((a, b) => {
-    const va = s.get(a), vb = s.get(b);
-    if (va == null) return 1; if (vb == null) return -1;
-    return s.asc ? String(va).localeCompare(String(vb)) : vb - va;
-  });
+// Empty query: resorts near the one on that side, then the biggest resorts. Typing: matches by size rank.
+const centreOf = r => [(r.bbox[0] + r.bbox[2]) / 2, (r.bbox[1] + r.bbox[3]) / 2];
+function distKm(a, b) {
+  const [lo1, la1] = centreOf(a), [lo2, la2] = centreOf(b);
+  const x = (lo2 - lo1) * Math.cos((la1 + la2) / 2 * DEG), y = la2 - la1;
+  return Math.hypot(x, y) * 111.2;
+}
+function nearestResorts(r, n) {
+  return INDEX.filter(o => o !== r).map(o => [o, distKm(r, o)]).sort((a, b) => a[1] - b[1]).slice(0, n);
 }
 
 const picker = { side: 0, items: [], act: 0 };
 function setupPickers() {
-  const sheet = $('#picker'), input = $('#q'), list = $('.results', sheet), sortSel = $('#sort'), count = $('.count', sheet);
-  sortSel.innerHTML = Object.entries(SORTS).map(([k, v]) => `<option value="${k}">${v.label}</option>`).join('');
+  const sheet = $('#picker'), input = $('#q'), list = $('.results', sheet), count = $('.count', sheet);
   // Rows are added in chunks as the list scrolls, so typing stays fast on phones.
-  const CHUNK = 250;
-  let shown = 0, lastC = null, lastK = null, cur = null;
+  const CHUNK = 200;
+  let shown = 0, cur = null;
   const rowsHtml = (from, to) => {
-    const metric = SORTS[sortKey].fmt ? SORTS[sortKey] : SORTS.runKm;
     let html = '';
     for (let k = from; k < to; k++) {
-      const r = picker.items[k];
-      if (sortKey === 'region') {
-        if (r.cont !== lastC) { html += `<li class="h1">${esc(r.cont)}</li>`; lastC = r.cont; lastK = null; }
-        const cn = r.countryName || r.country || '—';
-        if (cn !== lastK) { html += `<li class="h2">${esc(cn)}</li>`; lastK = cn; }
-      }
-      const sub = sortKey === 'region' ? (r.region || '') : (r.countryName || r.country || '');
-      const val = metric.get(r);
-      html += `<li role="option" data-k="${k}" class="${k === picker.act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n"><span class="nm">${esc(r.name)}</span> <span class="m">${esc(sub)}</span></span><span class="v">${val == null ? '–' : metric.fmt(val)}</span></li>`;
+      const { r, head, val } = picker.items[k];
+      if (head) html += `<li class="h1">${esc(head)}</li>`;
+      const sub = [r.region, r.countryName || r.country].filter(Boolean).join(', ');
+      html += `<li role="option" data-k="${k}" class="${k === picker.act ? 'act' : ''}${r.id === cur ? ' cur' : ''}"><span class="n"><span class="nm">${esc(r.name)}</span> <span class="m">${esc(sub)}</span></span><span class="v">${val}</span></li>`;
     }
     return html;
   };
@@ -182,19 +158,27 @@ function setupPickers() {
     else if (top < list.scrollTop + 40) list.scrollTop = top - 40;
     else if (top + h > list.scrollTop + view) list.scrollTop = top + h - view;
   };
-  const render = scrollToCurrent => {
-    sortSel.value = sortKey;
+  const render = () => {
     const q = norm(input.value.trim());
     const words = q.split(/\s+/).filter(Boolean);
-    picker.items = sortedIndex(INDEX.filter(r => words.every(w => r._s.includes(w))));
-    cur = sides[picker.side].resort?.id;
-    picker.act = Math.max(0, scrollToCurrent ? picker.items.findIndex(r => r.id === cur) : 0);
-    list.innerHTML = ''; shown = 0; lastC = lastK = null;
+    const here = sides[picker.side].resort, other = sides[1 - picker.side].resort;
+    cur = here?.id;
+    const km = r => `${fmt(r.runKm)} km of runs`;
+    if (words.length) {
+      const hits = INDEX.filter(r => words.every(w => r._s.includes(w))).sort((a, b) => a.rank - b.rank);
+      picker.items = hits.map(r => ({ r, val: km(r) }));
+      count.textContent = `${fmt(hits.length)} match${hits.length === 1 ? '' : 'es'}`;
+    } else {
+      const near = here ? nearestResorts(here, 10).map(([r, d], i) => ({ r, val: `${fmt(d)} km away`, head: i ? null : `Near ${here.name}` })) : [];
+      const top = INDEX.filter(r => r !== other).slice(0, 30).map((r, i) => ({ r, val: km(r), head: i ? null : 'Biggest resorts' }));
+      picker.items = [...near, ...top];
+      count.textContent = 'Type to search 4,000+ resorts';
+    }
+    picker.act = 0;
+    list.innerHTML = ''; shown = 0;
     if (!picker.items.length) list.innerHTML = '<li class="h2">No resorts match</li>';
-    more(picker.act + 60);
-    count.textContent = `${fmt(picker.items.length)} resort${picker.items.length === 1 ? '' : 's'}`;
+    more();
     list.scrollTop = 0;
-    if (scrollToCurrent) reveal(list.querySelector('li.act'), true);
   };
   list.addEventListener('scroll', () => { if (list.scrollTop + list.clientHeight > list.scrollHeight - 600) more(); }, { passive: true });
   // keep the sheet inside the visible area when the phone keyboard is up
@@ -213,12 +197,11 @@ function setupPickers() {
     fitSheet();
     input.value = '';
     input.placeholder = `${sides[side].resort?.name ? `Replace ${sides[side].resort.name}…` : 'Search 4,000+ resorts…'}`;
-    render(true);
+    render();
     if (!SMALL_SCREEN) input.focus();  // on phones, don't throw the keyboard up over the list
   };
-  const pick = k => { const r = picker.items[k]; if (!r) return; close(); selectResort(picker.side, r.id); };
-  input.addEventListener('input', () => render(false));
-  sortSel.addEventListener('change', () => { sortKey = sortSel.value; try { localStorage.setItem('sc.sort', sortKey); } catch {} render(true); });
+  const pick = k => { const r = picker.items[k]?.r; if (!r) return; close(); selectResort(picker.side, r.id); };
+  input.addEventListener('input', render);
   input.addEventListener('keydown', e => {
     if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
       e.preventDefault();
@@ -330,7 +313,20 @@ function updateHash() {
   history.replaceState(null, '', `${BASE}${A.id}#${B.id}`);
   document.title = `${A.name} vs ${B.name} · Slope Spy`;
   try { localStorage.setItem('sc.pair', JSON.stringify([A.id, B.id])); } catch {}
+  renderAboutResort(A);
   updateElevIcons();
+}
+
+// The About dialog's section on the first resort: facts and nearby resorts to compare with.
+function renderAboutResort(r) {
+  const el = document.getElementById('aboutResort');
+  if (!el) return;
+  const where = [r.region, r.countryName].filter(Boolean).join(', ');
+  const bits = [r.runKm ? `${fmt(r.runKm)} km of mapped runs` : null, r.lifts ? `${r.lifts} lifts` : null, r.vert ? `${fmt(r.vert)} m vertical` : null].filter(Boolean);
+  el.innerHTML = `<h3>${esc(r.name)}</h3><p class="resort-facts">${esc(where)}. ${esc(bits.join(', '))}.</p>`
+    + `<h3>Compare ${esc(r.name)} with</h3><ul class="links">`
+    + nearestResorts(r, 12).map(([o]) => `<li><a href="#${o.id}">${esc(o.name)}</a></li>`).join('') + '</ul>'
+    + '<p><a href="resorts">Browse all ski resorts</a></p>';
 }
 
 function setStatus(side, msg) {
@@ -1167,10 +1163,11 @@ function renderPanel(side, r, S) {
   if (S?.buildingCount) rows.push(['Buildings', fmt(S.buildingCount), 1]);
   if (S?.cell) rows.push(['Terrain detail', `~${fmt(S.cell)} m grid`, 1]);
   rows.push(['Size rank', `#${r.rank} of ${INDEX.length}`, 1]);
-  let site = '';
-  try { const u = new URL(S?.website || ''); if (/^https?:$/.test(u.protocol)) site = `<a class="site" href="${esc(u.href)}" target="_blank" rel="noopener">${esc(u.hostname.replace(/^www\./, ''))} ↗</a>`; } catch {}
+  const links = [];
+  try { const u = new URL(S?.website || ''); if (/^https?:$/.test(u.protocol)) links.push(`<a class="site" href="${esc(u.href)}" target="_blank" rel="noopener">${esc(u.hostname.replace(/^www\./, ''))} ↗</a>`); } catch {}
+  if (S) links.push(`<a class="site" href="https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent([r.name, r.region, r.countryName].filter(Boolean).join(', '))}" target="_blank" rel="noopener">Google Maps ↗</a>`);
   $('.stats', p).innerHTML = rows.map(([k, v, x]) => `<dt${x ? ' class="x"' : ''}>${k}</dt><dd${x ? ' class="x"' : ''}>${v}</dd>`).join('')
-    + (site ? `<dd class="site-row">${site}</dd>` : '');
+    + (links.length ? `<dd class="site-row">${links.join('')}</dd>` : '');
   updateLegend();
 }
 

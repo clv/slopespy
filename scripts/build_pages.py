@@ -77,14 +77,10 @@ def page(e):
            f'<meta property="og:url" content="{url}">\n<meta property="og:description" content="{esc(desc)}">\n<!--/seo-->')
     near = nearest(e)
     country = e.get('countryName') or e['country']
-    others = [o for o in by_country[country] if o is not e]
     body = [f'<!--resort--><h3>{esc(name)}</h3>',
             f'<p class="resort-facts">{esc(where)}. ' + esc(', '.join(bits)) + '.</p>',
             f'<h3>Compare {esc(name)} with</h3><ul class="links">' +
             ''.join(f'<li><a href="#{o["id"]}">{esc(o["name"])}</a></li>' for o in near) + '</ul>']
-    if others:
-        body.append(f'<h3>Ski resorts in {esc(country)}</h3><ul class="links">' +
-                    ''.join(f'<li><a href="{o["id"]}">{esc(o["name"])}</a></li>' for o in others) + '</ul>')
     body.append('<p><a href="resorts">Browse all ski resorts</a></p><!--/resort-->')
     out = sub(tpl, '<!--seo-->', '<!--/seo-->', seo)
     return sub(out, '<!--resort-->', '<!--/resort-->', '\n      '.join(body))

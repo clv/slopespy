@@ -235,3 +235,4 @@ html.sheet-open, html.sheet-open body { overflow: hidden; overscroll-behavior: n
   .seg.elev button svg { width: 25px; height: 15px; }
   .tool-btns .btn.icon { width: 30px; }
 }
+.stats .site-row { display: flex; flex-wrap: wrap; gap: 2px 14px; }
