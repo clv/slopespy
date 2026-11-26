@@ -264,3 +264,6 @@ header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
 @media (max-width: 760px) { .results li .other { width: 46px; margin: -9px -12px -9px 4px; } }
 /* distance / size column: flush right, next to the other-side button */
 .results li[data-k] .v { margin-left: auto; text-align: right; }
+.results li.h1 .v { color: var(--muted); font-weight: 400; letter-spacing: 0; text-transform: none; }
+.results li.more[data-near] { padding-left: 8px; }
+.pop-head[hidden] { display: none; }

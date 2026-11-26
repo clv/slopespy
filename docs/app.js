@@ -139,11 +139,17 @@ function distKm(a, b) {
   const x = (lo2 - lo1) * Math.cos((la1 + la2) / 2 * DEG), y = la2 - la1;
   return Math.hypot(x, y) * 111.2;
 }
+// "Near X" in search: nearby and big beats nearby and tiny. Score = size^0.6 / (distance + 15 km), within 400 km,
+// so Heavenly (85 km of runs, 41 km away) ranks above a 7 km rope-tow hill next door.
+function nearbyResorts(r, n) {
+  return INDEX.filter(o => o !== r).map(o => [o, distKm(r, o)]).filter(([, d]) => d < 400)
+    .map(([o, d]) => [o, d, (o.runKm + 2) ** 0.6 / (d + 15)]).sort((a, b) => b[2] - a[2]).slice(0, n);
+}
 function nearestResorts(r, n) {
   return INDEX.filter(o => o !== r).map(o => [o, distKm(r, o)]).sort((a, b) => a[1] - b[1]).slice(0, n);
 }
 
-const picker = { side: 0, items: [], act: 0 };
+const picker = { side: 0, items: [], act: 0, nearN: 10 };
 function setupPickers() {
   const sheet = $('#picker'), input = $('#q'), list = $('.results', sheet), count = $('.count', sheet);
   // Rows are added in chunks as the list scrolls, so typing stays fast on phones.
@@ -201,9 +207,11 @@ function setupPickers() {
     let html = '';
     if (here) {
       html += `<li class="h1">Near ${esc(here.name)}</li>`;
-      for (const [r, d] of nearestResorts(here, 8)) html += row(r, `${fmt(d)} km away`);
+      const near = nearbyResorts(here, picker.nearN + 1);
+      for (const [r, d] of near.slice(0, picker.nearN)) html += row(r, `${fmt(d)} km away`);
+      if (near.length > picker.nearN) html += '<li class="node more" data-near role="button">Show more nearby</li>';
     }
-    html += '<li class="h1">Browse</li>';
+    html += `<li class="h1">Browse<span class="v">${fmt(INDEX.length)}</span></li>`;
     for (const [c, countries] of groups) {
       const n = [...countries.values()].reduce((s, l) => s + l.length, 0), open = tree.cont === c;
       html += `<li class="node cont${open ? ' open' : ''}" data-cont="${esc(c)}" role="button" aria-expanded="${open}"><span class="tw"></span>${esc(c)}<span class="v">${fmt(n)}</span></li>`;
@@ -229,7 +237,7 @@ function setupPickers() {
     }
     list.innerHTML = html;
     shown = picker.items.length;   // nothing left for the chunk loader
-    count.textContent = 'Type to search 4,000+ resorts';
+    count.textContent = ''; count.parentElement.hidden = true;
   };
   const render = () => {
     const q = norm(input.value.trim());
@@ -250,6 +258,7 @@ function setupPickers() {
     }
     const hits = INDEX.filter(r => words.every(w => r._s.includes(w))).sort((a, b) => a.rank - b.rank);
     picker.items = hits.map(r => ({ r, val: km(r) }));
+    count.parentElement.hidden = false;
     count.textContent = `${fmt(hits.length)} match${hits.length === 1 ? '' : 'es'}`;
     picker.act = 0;
     list.innerHTML = ''; shown = 0;
@@ -264,6 +273,7 @@ function setupPickers() {
     let sel;
     if (n.dataset.cont != null) { const c = n.dataset.cont; tree.cont = tree.cont === c ? null : c; tree.ctry = null; tree.all = null; sel = `li.cont[data-cont="${CSS.escape(c)}"]`; }
     else if (n.dataset.ctry != null) { const k = n.dataset.ctry; tree.ctry = tree.ctry === k ? null : k; tree.all = null; sel = `li.ctry[data-ctry="${CSS.escape(k)}"]`; }
+    else if (n.dataset.near != null) { picker.nearN += 20; const top = list.scrollTop; renderTree(); list.scrollTop = top; return; }
     else if (n.dataset.all != null) { tree.all = n.dataset.all; sel = `li.ctry[data-ctry="${CSS.escape(n.dataset.all)}"]`; }
     renderTree();
     const h = list.querySelector(sel);
@@ -280,6 +290,7 @@ function setupPickers() {
   const close = () => { sheet.hidden = true; document.documentElement.classList.remove('sheet-open'); input.blur(); window.scrollTo(0, 0); };
   window.openPicker = side => {
     picker.side = side;
+    picker.nearN = 10;
     sheet.dataset.side = side;
     sheet.hidden = false;
     document.documentElement.classList.add('sheet-open');
