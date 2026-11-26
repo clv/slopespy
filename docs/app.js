@@ -613,7 +613,7 @@ function buildSide(S, data, terrain, landcover, features, places) {
   // colour by slope and position within the resort's elevation band
   const cols = new Float32Array(vcount * 3);
   const base = data.base ?? hmin, top = data.top ?? hmax;
-  const cValley = new THREE.Color('#c4d6ac'), cMid = new THREE.Color('#ecede8'), cSnow = new THREE.Color('#fafafa'), cRock = new THREE.Color('#b3b0aa');
+  const [cValley, cMid, cSnow] = PAL.elev.map(c => new THREE.Color(c)), cRock = new THREE.Color(PAL.rock);
   const nrm = geo.attributes.normal.array, tmp = new THREE.Color();
   for (let k = 0; k < vcount; k++) {
     const h = heights[k];
@@ -622,7 +622,7 @@ function buildSide(S, data, terrain, landcover, features, places) {
     const slope = Math.acos(Math.min(1, nrm[3 * k + 1])) / DEG;
     const rock = THREE.MathUtils.smoothstep(slope, 36, 48);
     if (landcover) tmp.setRGB(1, 1, 1);  // the land-cover texture supplies colour; keep only the rock tint
-    tmp.lerp(cRock, rock * (landcover ? 0.6 : 0.85));
+    tmp.lerp(cRock, rock * (landcover ? PAL.rockAmt : 0.85));
     cols[3 * k] = tmp.r; cols[3 * k + 1] = tmp.g; cols[3 * k + 2] = tmp.b;
   }
   geo.setAttribute('color', new THREE.BufferAttribute(cols, 3));
@@ -654,7 +654,7 @@ function buildSide(S, data, terrain, landcover, features, places) {
         float l20 = (1.0 - min(abs(fract(c20 - 0.5) - 0.5) / max(w20, 1e-6), 1.0)) * (1.0 - smoothstep(0.12, 0.35, w20));
         float c100 = vElev / 100.0, w100 = fwidth(c100);
         float l100 = (1.0 - min(abs(fract(c100 - 0.5) - 0.5) / max(w100 * 1.3, 1e-6), 1.0)) * (1.0 - smoothstep(0.15, 0.45, w100));
-        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(0.42, 0.38, 0.33), max(l20 * 0.16, l100 * 0.32));`);
+        diffuseColor.rgb = mix(diffuseColor.rgb, vec3(${PAL.contour.join(', ')}), max(l20 * ${PAL.c20.toFixed(3)}, l100 * ${PAL.c100.toFixed(3)}));`);
   };
   const mesh = new THREE.Mesh(geo, mat);
   S.root.add(mesh);
@@ -726,15 +726,20 @@ function buildSide(S, data, terrain, landcover, features, places) {
   applyVisibility();
 }
 
-// ---------- land cover, trees, buildings ----------
-// ESA WorldCover classes -> light topographic map colours (in the spirit of OpenSkiMap's base map)
-const LC_COLORS = {
-  0: [242, 242, 239], 10: [196, 214, 172], 20: [224, 232, 214], 30: [238, 240, 232], 40: [240, 240, 230],
-  50: [226, 222, 216], 60: [240, 239, 236], 70: [252, 252, 252], 80: [170, 203, 230], 90: [221, 232, 224],
-  95: [196, 214, 172], 100: [236, 236, 231],
+// ---------- base map colours ----------
+// lc: ESA WorldCover class -> RGB. elev: vertex tint by height when there's no land cover. rock: steep-slope tint.
+// Natural, satellite-like: meadow greens below, grey scree and snow above the trees
+const PAL = {
+  lc: { 0: [196, 192, 182], 10: [58, 92, 52], 20: [146, 158, 104], 30: [168, 180, 116], 40: [192, 186, 132], 50: [176, 166, 156], 60: [184, 178, 168], 70: [246, 248, 250], 80: [76, 120, 160], 90: [130, 152, 120], 95: [58, 92, 52], 100: [170, 172, 150] },
+  elev: ['#8fa46a', '#c2bcae', '#f4f5f6'], rock: '#9b958b', rockAmt: 0.75,
+  roads: { major: ['#ece6da', '#6f675c'], minor: ['#ddd7cb', '#7d756a'], service: ['#d2ccc0', '#857d72'] },
+  parking: '#b9b2a6', bldFill: '#a8988a', bldLine: '#776a5e', bld3d: '#a08f80', tree: '#2f5230',
+  contour: [0.30, 0.27, 0.22], c20: 0.10, c100: 0.22, shade: { inside: 0, outside: 30 },
 };
-// [fill, casing, width in metres]
-const ROAD_STYLE = { major: ['#f7da8f', '#c9a24e', 14], minor: ['#ffffff', '#b9b4ad', 8], service: ['#ffffff', '#c6c1ba', 5] };
+
+// ---------- land cover, trees, buildings ----------
+const LC_COLORS = PAL.lc;
+const ROAD_STYLE = { major: [...PAL.roads.major, 14], minor: [...PAL.roads.minor, 8], service: [...PAL.roads.service, 5] };
 
 // features files store rings as flat [x1, y1, x2, y2, ...] metres from an origin; turn them back into [lon, lat]
 function decodeFeatures(f) {
@@ -782,7 +787,7 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
     const P = ([lon, lat]) => [(lon2px(lon, z) - crop[0]) * sx, (lat2px(lat, z) - crop[1]) * sy];
     const path = ring => { ring.forEach((pt, i) => { const [x, y] = P(pt); i ? ctx.lineTo(x, y) : ctx.moveTo(x, y); }); };
     const mPerTexPx = widthM / W;
-    ctx.fillStyle = '#e6e3df';
+    ctx.fillStyle = PAL.parking;
     for (const ring of features.p || []) { ctx.beginPath(); path(ring); ctx.closePath(); ctx.fill(); }
     ctx.lineCap = 'round'; ctx.lineJoin = 'round';
     for (const pass of [1, 0]) for (const k of ['service', 'minor', 'major']) {   // casings first, then fills
@@ -793,7 +798,7 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
       for (const line of features.r?.[k] || []) path(line);
       ctx.stroke();
     }
-    ctx.fillStyle = '#d9d0c7'; ctx.strokeStyle = '#b8aca0'; ctx.lineWidth = 1;
+    ctx.fillStyle = PAL.bldFill; ctx.strokeStyle = PAL.bldLine; ctx.lineWidth = 1;
     ctx.beginPath();
     for (const [, ring] of features.b || []) { path(ring); ctx.closePath(); }
     ctx.fill(); ctx.stroke();
@@ -821,7 +826,7 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
 }
 
 // Shading: -100 darkens to black, +100 lightens to white.
-const shading = { inside: 10, outside: 67 };  // lighten inside the ski area by 10%, outside by 67%
+const shading = { ...PAL.shade };  // per-palette: lighten (+) or darken (-) inside / outside the ski area
 let shadeTmp = null;
 function applyShading(G) {
   const { cv, base, mask, tex } = G, W = cv.width, H = cv.height;
@@ -869,7 +874,7 @@ function buildTrees(S, lc, terrain, toX, toZ, z) {
   if (!count) return null;
   const geo = new THREE.ConeGeometry(4, 16, 6);
   geo.translate(0, 8, 0);
-  const mat = new THREE.MeshStandardMaterial({ color: '#7f9e6c', roughness: 1, flatShading: true });
+  const mat = new THREE.MeshStandardMaterial({ color: PAL.tree, roughness: 1, flatShading: true });
   const mesh = new THREE.InstancedMesh(geo, mat, count);
   const base = new Float32Array(count * 4);
   for (let k = 0; k < count; k++) {
@@ -920,7 +925,7 @@ function buildBuildings(S, list, terrain, toX, toZ) {
   const local = new Float32Array(pos);
   geo.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
   geo.setIndex(idx);
-  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: '#a39586', roughness: 0.9, flatShading: true }));
+  const mesh = new THREE.Mesh(geo, new THREE.MeshStandardMaterial({ color: PAL.bld3d, roughness: 0.9, flatShading: true }));
   mesh.userData = { local, baseH: new Float32Array(baseH) };
   S.flat.add(mesh);
   return mesh;
@@ -1472,7 +1477,7 @@ function updateLegend() {
   if (convs.has('north_america') || convs.has('japan')) { add(DIFF_COLORS.green, 'Green'); add(convs.has('japan') ? DIFF_COLORS.red : DIFF_COLORS.blue, 'Blue/red'); }
   add(DIFF_COLORS.black, 'Black'); add(DIFF_COLORS.orange, 'Freeride');
   items.push(`<span><i style="background:${LIFT_COLOR};outline:2px solid #111418"></i>Lift</span>`); add(BOUNDARY_COLOR, 'Ski-area boundary');
-  add('#7f9e6c', 'Trees'); add('#f7da8f', 'Roads'); add('#e6e3df', 'Parking'); add('#a39586', 'Buildings');
+  add(PAL.tree, 'Trees'); add(PAL.roads.major[0], 'Roads'); add(PAL.parking, 'Parking'); add(PAL.bld3d, 'Buildings');
   $('#legend').innerHTML = items.join('');
 }
 
