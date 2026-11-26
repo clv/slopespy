@@ -23,6 +23,11 @@ OSM = 'https://tiles.openskimap.org/geojson/{}.geojson'
 MUST_HAVE = ['big-sky', 'sugar-bowl', 'dolomiti-superski', 'whistler-blackcomb']
 MAX_FILES = 19500        # Cloudflare Pages allows 20,000 files per deployment
 MIN_KEEP = 0.95          # refuse if more than 5% of resorts vanish at once
+UA = {'User-Agent': 'slopespy-data-refresh (+https://slopespy.com)'}  # OpenSkiMap 403s Python's default
+
+
+def get(url, timeout):
+    return urllib.request.urlopen(urllib.request.Request(url, headers=UA), timeout=timeout)
 
 
 def run(*cmd, **env):
@@ -35,7 +40,7 @@ def download(raw):
     for name in ('ski_areas', 'runs', 'lifts'):
         dst = os.path.join(raw, name + '.geojson')
         print('download', OSM.format(name), flush=True)
-        with urllib.request.urlopen(OSM.format(name), timeout=600) as r:
+        with get(OSM.format(name), 600) as r:
             modified = r.headers.get('Last-Modified')
             with open(dst + '.tmp', 'wb') as f:
                 while chunk := r.read(1 << 20):
@@ -45,7 +50,7 @@ def download(raw):
 
 
 def latest_overture():
-    with urllib.request.urlopen('https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com/?list-type=2&prefix=release/&delimiter=/', timeout=60) as r:
+    with get('https://overturemaps-us-west-2.s3.us-west-2.amazonaws.com/?list-type=2&prefix=release/&delimiter=/', 60) as r:
         rel = re.findall(r'<Prefix>release/([^<]+)/</Prefix>', r.read().decode())
     return max(rel)
 
