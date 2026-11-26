@@ -728,7 +728,7 @@ function buildSide(S, data, terrain, landcover, features, places) {
   S.footprint = [Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)];
   S.area = data.boundary ? polyArea(data.boundary, toX, toZ) : null;
   S.website = data.website || null;
-  S.src = { data, terrain, landcover, features, conv: CONVENTIONS[data.conv] || CONVENTIONS.europe };   // for the 3D-print export
+  S.src = { data, terrain, landcover, features, places, ground: S.ground?.cv, labelCanvas, conv: CONVENTIONS[data.conv] || CONVENTIONS.europe };   // for the 3D-print export
   S.osk = /^[0-9a-f]{40}$/.test(data.osk || '') ? data.osk : null;
   S.extent = Math.max((px1 - px0), (py1 - py0)) * (40075016 * Math.cos(cy * DEG) / worldPx(z));
   S.mid = ((data.top ?? hmax) + (data.base ?? hmin)) / 2;

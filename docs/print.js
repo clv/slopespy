@@ -31,7 +31,7 @@ function palette(mode, conv) {
     { name: 'Ground', hex: '#ece9e2' }, { name: 'Forest', hex: '#2f5a35' }, { name: 'Water', hex: '#6fa3d6' }, { name: 'Buildings', hex: '#9a7a62' },
     { name: 'Easy runs', hex: RUN_HEX[conv.easy] || RUN_HEX.green }, { name: 'Intermediate runs', hex: RUN_HEX[conv.intermediate] || RUN_HEX.blue },
     { name: 'Advanced runs', hex: RUN_HEX.black }, { name: 'Lifts', hex: '#f2c230' }];
-  return null;
+  return null;   // single colour, or full colour (a texture instead of slots)
 }
 const RUN_LEVEL = { novice: 0, easy: 0, intermediate: 1, advanced: 2, expert: 2, freeride: 2, extreme: 2 };
 
@@ -179,7 +179,8 @@ function buildGrid(src, o, cell) {
     }
   }
   let zmax = 0; for (let k = 0; k < N; k++) if (Z[k] > zmax) zmax = Z[k];
-  return { nx, ny, cell, Z, slot, pal, size: [(nx - 1) * cell, (ny - 1) * cell, zmax], scale: 1000 / mmPerM };
+  return { nx, ny, cell, Z, slot, pal, size: [(nx - 1) * cell, (ny - 1) * cell, zmax], scale: 1000 / mmPerM,
+    region: { z, px0, py0, px1, py1, mmPerPx }, nameBox: text?.box || null };
 }
 
 // The resort's name, raised 1 mm, in the flattest low-lying spot that no run or lift crosses (usually a valley floor).
@@ -222,6 +223,7 @@ function placeLabel(g, name, width) {
     // no textures around the letters; the letters follow the ground 1 mm proud of it
     Z[k] = Z0[k] + 1.0 * a;
   }
+  mask.box = { x: (best.i0 + bw / 2) * cell, y: (best.j0 + bh / 2) * cell, size: fs * cell };
   return mask;
 }
 
@@ -325,13 +327,13 @@ function crc32(bytes, crc = 0xFFFFFFFF) { for (let i = 0; i < bytes.length; i++)
 async function zip(files, type) {
   const enc = new TextEncoder(), out = [], central = [];
   let offset = 0;
-  for (const [name, content] of files) {
-    const chunks = (Array.isArray(content) ? content : [content]).map(s => enc.encode(s));
+  for (const [name, content, store] of files) {
+    const chunks = content instanceof Blob ? [new Uint8Array(await content.arrayBuffer())] : (Array.isArray(content) ? content : [content]).map(s => enc.encode(s));
     let crc = 0xFFFFFFFF, size = 0;
     for (const c of chunks) { crc = crc32(c, crc); size += c.length; }
     crc = (crc ^ 0xFFFFFFFF) >>> 0;
     let data = new Blob(chunks), method = 0;
-    if (typeof CompressionStream !== 'undefined') {
+    if (!store && typeof CompressionStream !== 'undefined') {
       data = await new Response(data.stream().pipeThrough(new CompressionStream('deflate-raw'))).blob(); method = 8;
     }
     const nm = enc.encode(name);
@@ -352,10 +354,210 @@ async function zip(files, type) {
   return new Blob([...out, ...central, end.buffer], { type });
 }
 
+// ---------- full colour: the main view baked into a texture ----------
+// The ground texture the viewer shows (land cover, roads, shading), then runs, boundary, lifts, lift names,
+// peak and place names and the resort's name, drawn flat at print scale. Text sizes are in millimetres on the print.
+const TEX_BASE = '#5e5850';   // walls and base
+async function bakeTexture(src, G, maxPx) {
+  const { z, px0, py0, px1, py1, mmPerPx } = G.region;
+  const spanX = px1 - px0, spanY = py1 - py0;
+  const scale = maxPx / Math.max(spanX, spanY);                  // texture px per mercator px
+  const W = Math.round(spanX * scale), H = Math.round(spanY * scale);
+  const pxPerMM = scale / mmPerPx;
+  const cv = document.createElement('canvas'); cv.width = W; cv.height = H + 8;   // + a strip of base colour
+  const g = cv.getContext('2d');
+  g.fillStyle = TEX_BASE; g.fillRect(0, 0, W, H + 8);
+  const crop = src.terrain.crop;
+  if (src.ground) {
+    const gw = src.ground.width, gh = src.ground.height;
+    const sx = (px0 - crop[0]) / (crop[2] - crop[0]) * gw, sy = (py0 - crop[1]) / (crop[3] - crop[1]) * gh;
+    const sw = spanX / (crop[2] - crop[0]) * gw, sh = spanY / (crop[3] - crop[1]) * gh;
+    g.imageSmoothingQuality = 'high';
+    g.drawImage(src.ground, sx, sy, sw, sh, 0, 0, W, H);
+  } else { g.fillStyle = '#c2bcae'; g.fillRect(0, 0, W, H); }
+  // what the viewer adds in its shader: grey rock on steep slopes, contour lines every 20 m and 100 m
+  {
+    const mPerTex = mmPerPx / (1000 / G.scale) / scale;          // ground metres per texture pixel
+    const tp = src.terrain.sampleGP, inv = 1 / scale;
+    const img = g.getImageData(0, 0, W, H), d = img.data;
+    const rock = [0x9b, 0x95, 0x8b], cc = [0.30, 0.27, 0.22].map(v => v * 255);
+    const sstep = (e0, e1, x) => { const t = Math.min(1, Math.max(0, (x - e0) / (e1 - e0))); return t * t * (3 - 2 * t); };
+    let prev = new Float32Array(W + 1), cur = new Float32Array(W + 1);
+    for (let i = 0; i <= W; i++) prev[i] = tp(px0 + i * inv, py0);
+    for (let y = 0; y < H; y++) {
+      for (let i = 0; i <= W; i++) cur[i] = tp(px0 + i * inv, py0 + (y + 1) * inv);
+      for (let x = 0; x < W; x++) {
+        const h = (prev[x] + prev[x + 1] + cur[x] + cur[x + 1]) / 4;
+        const gx = (prev[x + 1] - prev[x] + cur[x + 1] - cur[x]) / 2, gy = (cur[x] - prev[x] + cur[x + 1] - prev[x + 1]) / 2;
+        const grad = Math.hypot(gx, gy);                            // metres of height per texture pixel
+        const slope = Math.atan(grad / mPerTex) * 57.2958;
+        const r = sstep(36, 48, slope) * 0.75;
+        // anti-aliased contour lines about 0.12 mm (100 m) and 0.08 mm (20 m) wide on the print
+        const line = (step, wmm) => {
+          const wpx = wmm * pxPerMM, dist = Math.abs(((h / step) % 1 + 1.5) % 1 - 0.5) * step / Math.max(grad, 1e-6);
+          return Math.max(0, Math.min(1, wpx / 2 + 0.5 - dist));
+        };
+        const sp20 = 20 / Math.max(grad, 1e-6) / pxPerMM, sp100 = sp20 * 5;   // line spacing in mm
+        const c = Math.max(line(20, 0.08) * 0.10 * (1 - sstep(0.25, 0.6, 1 / sp20)), line(100, 0.12) * 0.22 * (1 - sstep(0.3, 0.8, 1 / sp100)));
+        const k = 4 * (y * W + x);
+        for (let ch = 0; ch < 3; ch++) { let v = d[k + ch] * (1 - r) + d[k + ch] * rock[ch] / 255 * r; d[k + ch] = v * (1 - c) + cc[ch] * c; }
+      }
+      [prev, cur] = [cur, prev];
+    }
+    g.putImageData(img, 0, 0);
+  }
+  const P = (lon, lat) => [(lon2px(lon, z) - px0) * scale, (lat2px(lat, z) - py0) * scale];
+  const mm = v => v * pxPerMM;
+  const rings = (feats, fn) => { for (const f of feats) {
+    if (f.t === 'LineString') fn(f, f.c);
+    else if (f.t === 'MultiLineString' || f.t === 'Polygon') f.c.forEach(r => fn(f, r));
+    else if (f.t === 'MultiPolygon') f.c.forEach(p => p.forEach(r => fn(f, r)));
+  } };
+  const path = ring => { g.beginPath(); ring.forEach((c, i) => { const [x, y] = P(c[0], c[1]); i ? g.lineTo(x, y) : g.moveTo(x, y); }); };
+  g.lineCap = 'round'; g.lineJoin = 'round';
+  const { data } = src, conv = src.conv;
+  if (data.boundary) { g.strokeStyle = '#c27ff0'; g.lineWidth = mm(0.35); rings([data.boundary], (f, r) => { path(r); g.closePath(); g.stroke(); }); }
+  const RUNC = { green: '#2fa354', blue: '#2f6fd6', red: '#d93a2f', black: '#15181c', orange: '#f08c1a', grey: '#7d8790' };
+  g.lineWidth = mm(0.45);
+  rings(data.runs, (f, r) => { g.strokeStyle = RUNC[conv[f.d] || ({ freeride: 'orange', extreme: 'orange' }[f.d]) || 'grey']; path(r); g.stroke(); });
+  for (const [col, w] of [['#111418', 0.75], ['#ffd23f', 0.4]]) { g.strokeStyle = col; g.lineWidth = mm(w); rings(data.lifts, (f, r) => { path(r); g.stroke(); }); }
+  g.fillStyle = '#111418';
+  rings(data.lifts, (f, r) => { for (const c of [r[0], r[r.length - 1]]) { const [x, y] = P(c[0], c[1]); g.beginPath(); g.arc(x, y, mm(0.45), 0, 7); g.fill(); } });
+  g.fillStyle = '#fff4c2';
+  rings(data.lifts, (f, r) => { for (const c of [r[0], r[r.length - 1]]) { const [x, y] = P(c[0], c[1]); g.beginPath(); g.arc(x, y, mm(0.25), 0, 7); g.fill(); } });
+
+  // lift names inline on the lift, never upside down (the viewer's own label artwork)
+  const taken = [];
+  const free = b => !taken.some(t => b.x0 < t.x1 && b.x1 > t.x0 && b.y0 < t.y1 && b.y1 > t.y0);
+  if (src.labelCanvas) {
+    const labs = [];
+    for (const f of data.lifts) {
+      const line = f.t === 'MultiLineString' ? f.c.flat() : f.c;
+      if (!f.n || !line || line.length < 2) continue;
+      const [ax, ay] = P(...line[0]), [bx, by] = P(...line[line.length - 1]);
+      const len = Math.hypot(bx - ax, by - ay);
+      const lab = src.labelCanvas(f);
+      let h = mm(2.2), w = h * lab.aspect;
+      if (w > len * 0.85) { h = len * 0.85 / lab.aspect; w = h * lab.aspect; }
+      if (h < mm(1.1)) continue;
+      let ang = Math.atan2(by - ay, bx - ax);
+      if (ang > Math.PI / 2) ang -= Math.PI; else if (ang < -Math.PI / 2) ang += Math.PI;
+      labs.push({ lab, x: (ax + bx) / 2, y: (ay + by) / 2, w, h, ang });
+    }
+    await Promise.all(labs.map(l => l.lab.ready));
+    for (const l of labs) {
+      l.lab.redraw();
+      g.save(); g.translate(l.x, l.y); g.rotate(l.ang); g.drawImage(l.lab.c, -l.w / 2, -l.h / 2, l.w, l.h); g.restore();
+      const ex = Math.abs(Math.cos(l.ang)) * l.w / 2 + Math.abs(Math.sin(l.ang)) * l.h / 2, ey = Math.abs(Math.sin(l.ang)) * l.w / 2 + Math.abs(Math.cos(l.ang)) * l.h / 2;
+      taken.push({ x0: l.x - ex, x1: l.x + ex, y0: l.y - ey, y1: l.y + ey });
+    }
+  }
+  // peaks and places, most important first, skipping any that would overlap
+  const font = (wt, px, it = '') => `${it}${wt} ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const text = (t, x, y, f, fill) => { g.font = f; g.lineWidth = mm(0.5); g.strokeStyle = 'rgba(255,255,255,.9)'; g.strokeText(t, x, y); g.fillStyle = fill; g.fillText(t, x, y); };
+  g.textAlign = 'center'; g.textBaseline = 'middle'; g.lineJoin = 'round';
+  const short = n => n.split(' / ')[0];
+  const items = [];
+  const ps = src.places || {};
+  for (const [n, lon, lat, rank] of ps.v || []) items.push({ pri: rank === 3 ? 3 : rank, lon, lat, kind: 'place', n: rank === 3 ? short(n).toUpperCase() : short(n), rank });
+  (ps.k || []).forEach(([n, lon, lat, ele], i) => items.push({ pri: 2.5 + i / 1000, lon, lat, kind: 'peak', n: short(n), ele }));
+  items.sort((a, b) => a.pri - b.pri);
+  const SZ = [3.4, 3.0, 2.6, 1.9];
+  for (const it of items) {
+    const [x, y] = P(it.lon, it.lat);
+    if (x < 0 || y < 0 || x > W || y > H) continue;
+    if (it.kind === 'place') {
+      const px = mm(SZ[it.rank]); const f = font(it.rank === 3 ? 500 : 650, px, it.rank === 3 ? 'italic ' : '');
+      g.font = f; const w = g.measureText(it.n).width;
+      const b = { x0: x - w / 2, x1: x + w / 2, y0: y - px * 0.6, y1: y + px * 0.6 };
+      if (b.x0 < 0 || b.x1 > W || !free(b)) continue;
+      text(it.n, x, y, f, it.rank === 3 ? '#4a4a4a' : '#222'); taken.push(b);
+    } else {
+      const px = mm(2.1), e = it.ele != null ? `${it.ele.toLocaleString()} m` : '';
+      g.font = font(600, px); const w = Math.max(g.measureText(it.n).width, e ? g.measureText(e).width * 0.85 : 0);
+      const b = { x0: x - w / 2, x1: x + w / 2, y0: y - mm(1), y1: y + mm(1) + px * (e ? 2.2 : 1.2) };
+      if (b.x0 < 0 || b.x1 > W || b.y1 > H || !free(b)) continue;
+      g.fillStyle = '#4b3b2c'; g.strokeStyle = 'rgba(255,255,255,.9)'; g.lineWidth = mm(0.3);
+      g.beginPath(); g.moveTo(x, y - mm(0.8)); g.lineTo(x + mm(0.8), y + mm(0.6)); g.lineTo(x - mm(0.8), y + mm(0.6)); g.closePath(); g.stroke(); g.fill();
+      text(it.n, x, y + mm(0.9) + px * 0.6, font(600, px), '#4b3b2c');
+      if (e) text(e, x, y + mm(0.9) + px * 1.65, font(500, px * 0.85), '#6b5a48');
+      taken.push(b);
+    }
+  }
+  // the resort's name (raised on the print) in dark ink
+  if (G.nameBox) {
+    const b = G.nameBox;
+    g.font = font(700, b.size * W / G.size[0]);
+    g.fillStyle = '#15181c';
+    g.fillText(src.name, b.x * W / G.size[0], b.y * H / G.size[1] + b.size * H / G.size[1] * 0.05);
+  }
+  return { canvas: cv, W, H };
+}
+// UV for grid point (i, j): u across, v up (texture row 0 is the north edge); walls and base use the base-colour strip
+const uvOf = (G, T) => {
+  const uv = new Float32Array(G.nx * G.ny * 2), tot = T.H + 8;
+  for (let j = 0; j < G.ny; j++) for (let i = 0; i < G.nx; i++) {
+    const k = j * G.nx + i;
+    uv[2 * k] = (i / (G.nx - 1) * (T.W - 1) + 0.5) / T.W;
+    uv[2 * k + 1] = 1 - (j / (G.ny - 1) * (T.H - 1) + 0.5) / tot;
+  }
+  return { uv, base: [0.5, 1 - (T.H + 4) / tot] };
+};
+const pngOf = canvas => new Promise(res => canvas.toBlob(res, 'image/png'));
+
+async function to3MFTextured(M, G, T, name) {
+  const { pos, tri, nTop } = M, N = G.nx * G.ny, { uv, base } = uvOf(G, T);
+  const parts = [];
+  parts.push(`<?xml version="1.0" encoding="UTF-8"?>\n<model unit="millimeter" xml:lang="en-US" xmlns="http://schemas.microsoft.com/3dmanufacturing/core/2015/02" xmlns:m="http://schemas.microsoft.com/3dmanufacturing/material/2015/02">\n`);
+  parts.push(`<metadata name="Title">${esc(name)}</metadata>\n<metadata name="Application">Slope Spy</metadata>\n<resources>\n`);
+  parts.push('<m:texture2d id="3" path="/3D/Textures/map.png" contenttype="image/png" tilestyleu="clamp" tilestylev="clamp" filter="linear"/>\n<m:texture2dgroup id="4" texid="3">');
+  let chunk = '';
+  for (let k = 0; k < N; k++) { chunk += `<m:tex2coord u="${uv[2 * k].toFixed(5)}" v="${uv[2 * k + 1].toFixed(5)}"/>`; if (chunk.length > 1 << 20) { parts.push(chunk); chunk = ''; } }
+  chunk += `<m:tex2coord u="${base[0]}" v="${base[1].toFixed(5)}"/>`;
+  parts.push(chunk, '</m:texture2dgroup>\n<object id="2" type="model" pid="4" pindex="' + N + '"><mesh><vertices>\n'); chunk = '';
+  for (let v = 0; v < pos.length; v += 3) { chunk += `<vertex x="${pos[v].toFixed(3)}" y="${pos[v + 1].toFixed(3)}" z="${pos[v + 2].toFixed(3)}"/>`; if (chunk.length > 1 << 20) { parts.push(chunk); chunk = ''; } }
+  parts.push(chunk, '\n</vertices><triangles>\n'); chunk = '';
+  for (let f = 0, k = 0; f < tri.length; f += 3, k++) {
+    const a = tri[f], b = tri[f + 1], c = tri[f + 2];
+    chunk += k < nTop ? `<triangle v1="${a}" v2="${b}" v3="${c}" pid="4" p1="${a}" p2="${b}" p3="${c}"/>` : `<triangle v1="${a}" v2="${b}" v3="${c}" pid="4" p1="${N}"/>`;
+    if (chunk.length > 1 << 20) { parts.push(chunk); chunk = ''; }
+  }
+  parts.push(chunk, '\n</triangles></mesh></object>\n</resources>\n<build><item objectid="2"/></build>\n</model>\n');
+  const png = await pngOf(T.canvas);
+  return zip([
+    ['[Content_Types].xml', '<?xml version="1.0" encoding="UTF-8"?>\n<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types"><Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/><Default Extension="model" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodel+xml"/><Default Extension="png" ContentType="application/vnd.ms-package.3dmanufacturing-3dmodeltexture"/></Types>'],
+    ['_rels/.rels', '<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/3dmodel.model" Id="rel0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dmodel"/></Relationships>'],
+    ['3D/_rels/3dmodel.model.rels', '<?xml version="1.0" encoding="UTF-8"?>\n<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships"><Relationship Target="/3D/Textures/map.png" Id="tex0" Type="http://schemas.microsoft.com/3dmanufacturing/2013/01/3dtexture"/></Relationships>'],
+    ['3D/3dmodel.model', parts],
+    ['3D/Textures/map.png', png, true],
+  ], 'model/3mf');
+}
+
+// OBJ + MTL + PNG in a zip (GrabCAD Print, most colour-printing services)
+async function toOBJ(M, G, T, base) {
+  const { pos, tri, nTop } = M, N = G.nx * G.ny, { uv, base: bv } = uvOf(G, T);
+  const parts = [`# ${base} · Slope Spy · millimetres\nmtllib ${base}.mtl\nusemtl map\n`];
+  let chunk = '';
+  for (let v = 0; v < pos.length; v += 3) { chunk += `v ${pos[v].toFixed(3)} ${pos[v + 1].toFixed(3)} ${pos[v + 2].toFixed(3)}\n`; if (chunk.length > 1 << 20) { parts.push(chunk); chunk = ''; } }
+  for (let k = 0; k < N; k++) { chunk += `vt ${uv[2 * k].toFixed(5)} ${uv[2 * k + 1].toFixed(5)}\n`; if (chunk.length > 1 << 20) { parts.push(chunk); chunk = ''; } }
+  chunk += `vt ${bv[0]} ${bv[1].toFixed(5)}\n`;
+  for (let f = 0, k = 0; f < tri.length; f += 3, k++) {
+    const a = tri[f] + 1, b = tri[f + 1] + 1, c = tri[f + 2] + 1;
+    chunk += k < nTop ? `f ${a}/${a} ${b}/${b} ${c}/${c}\n` : `f ${a}/${N + 1} ${b}/${N + 1} ${c}/${N + 1}\n`;
+    if (chunk.length > 1 << 20) { parts.push(chunk); chunk = ''; }
+  }
+  parts.push(chunk);
+  const mtl = `newmtl map\nKa 1 1 1\nKd 1 1 1\nKs 0 0 0\nd 1\nillum 1\nmap_Kd ${base}.png\n`;
+  return zip([[`${base}.obj`, parts], [`${base}.mtl`, mtl], [`${base}.png`, await pngOf(T.canvas), true]], 'application/zip');
+}
+
 // ---------- dialog ----------
 let dlg = null, view = null;
 const PREVIEW_CELLS = 480;   // grid points along the long side for the live preview
 const MAX_CELLS = 900;       // and for the download (0.25 mm at 150-225 mm)
+const SMALL = matchMedia('(pointer: coarse)').matches || innerWidth < 800;
+const PREVIEW_TEX = SMALL ? 1024 : 2048;   // full-colour texture, long side
+const fullTex = width => Math.min(SMALL ? 4096 : 8192, Math.ceil(width * 25));   // ~25 px/mm, a little past PolyJet's ~600 dpi
 
 function ensureDialog() {
   if (dlg) return dlg;
@@ -370,11 +572,13 @@ function ensureDialog() {
       <form class="print-form">
         <fieldset><legend>Format</legend>
           <label><input type="radio" name="format" value="stl"> STL</label>
-          <label><input type="radio" name="format" value="3mf"> 3MF</label></fieldset>
+          <label><input type="radio" name="format" value="3mf"> 3MF</label>
+          <label><input type="radio" name="format" value="obj"> OBJ <span class="muted">zip</span></label></fieldset>
         <fieldset><legend>Colors</legend>
           <label><input type="radio" name="colors" value="mono"> Single color</label>
           <label><input type="radio" name="colors" value="4"> 4 colors</label>
-          <label><input type="radio" name="colors" value="8"> 8 colors</label></fieldset>
+          <label><input type="radio" name="colors" value="8"> 8 colors</label>
+          <label><input type="radio" name="colors" value="full"> Full color</label></fieldset>
         <fieldset class="wide"><label class="check"><input type="checkbox" name="relief"> Relief textures <span class="muted">forest bumps, engraved runs, raised lifts, buildings and boundary</span></label>
           <label class="check"><input type="checkbox" name="label"> Resort name <span class="muted">raised 1 mm, following the ground in a low spot</span></label></fieldset>
         <fieldset><legend>Width</legend><select name="width">${[100, 150, 200, 250].map(v => `<option value="${v}">${v} mm</option>`).join('')}</select></fieldset>
@@ -397,15 +601,21 @@ function ensureDialog() {
 
 function readForm(form) {
   const pick = n => form.querySelector(`[name="${n}"]:checked`)?.value;   // (disabled radios still count)
-  return { format: pick('format'), colors: pick('colors') || 'mono', relief: form.relief.checked, label: form.label.checked, width: +form.width.value, exag: +form.exag.value, base: +form.base.value, area: pick('area') };
+  const format = pick('format');
+  const colors = format === '3mf' && form.dataset.format === '3mf' ? pick('colors') || 'mono' : form.dataset.colors || 'mono';
+  return { format, colors, relief: form.relief.checked, label: form.label.checked, width: +form.width.value, exag: +form.exag.value, base: +form.base.value, area: pick('area') };
 }
 // STL carries no colour, so it always prints single-colour (the colour choice is kept for when 3MF is picked again)
-const effective = o => o.format === 'stl' ? { ...o, colors: 'mono' } : o;
+// OBJ is for full-colour printers (Stratasys PolyJet, HP MJF, Mimaki), so it always carries the texture
+const effective = o => o.format === 'stl' ? { ...o, colors: 'mono' } : o.format === 'obj' ? { ...o, colors: 'full' } : o;
 function writeForm(form, o) {
+  form.dataset.colors = o.colors;   // the 3MF colour choice, kept while STL or OBJ force their own
+  form.dataset.format = o.format;
   for (const k of ['format', 'colors', 'area']) { const el = form.querySelector(`[name="${k}"][value="${o[k]}"]`); if (el) el.checked = true; }
   form.relief.checked = o.relief; form.label.checked = o.label;
   for (const k of ['width', 'exag', 'base']) form[k].value = String(o[k]);
-  for (const el of form.querySelectorAll('[name="colors"]')) el.disabled = o.format === 'stl';
+  for (const el of form.querySelectorAll('[name="colors"]')) el.disabled = o.format === 'stl' || (o.format === 'obj' && el.value !== 'full');
+  { const el = form.querySelector(`[name="colors"][value="${effective(o).colors}"]`); if (el) el.checked = true; }
   form.querySelector('[name="colors"]').closest('fieldset').classList.toggle('off', o.format === 'stl');
 }
 
@@ -424,7 +634,7 @@ function setupView(canvas) {
   loop();
   return v;
 }
-function showPreview(G, o, refit) {
+function showPreview(G, o, refit, T) {
   const M = buildMesh(G);
   const geo = new THREE.BufferGeometry();
   // three.js is y-up: model x -> x, model z (height) -> y, model y (north) -> -z
@@ -434,13 +644,20 @@ function showPreview(G, o, refit) {
   geo.setIndex(new THREE.BufferAttribute(M.tri, 1));
   geo.computeVertexNormals();
   let mat;
-  if (G.pal) {
+  if (T) {
+    const { uv, base } = uvOf(G, T), N = G.nx * G.ny, u2 = new Float32Array(N * 4);
+    u2.set(uv); for (let k = N; k < 2 * N; k++) { u2[2 * k] = base[0]; u2[2 * k + 1] = base[1]; }
+    geo.setAttribute('uv', new THREE.BufferAttribute(u2, 2));
+    const tex = new THREE.CanvasTexture(T.canvas); tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = true;
+    tex.anisotropy = view.renderer.capabilities.getMaxAnisotropy();
+    mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 });
+  } else if (G.pal) {
     const cols = G.pal.map(c => new THREE.Color(c.hex)), N = G.nx * G.ny, col = new Float32Array(p.length);
     for (let k = 0; k < N * 2; k++) { const c = k < N ? cols[G.slot[k]] : cols[0]; col.set([c.r, c.g, c.b], 3 * k); }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 });
   } else mat = new THREE.MeshStandardMaterial({ color: '#d9d6cf', roughness: 0.6 });
-  if (view.mesh) { view.scene.remove(view.mesh); view.mesh.geometry.dispose(); view.mesh.material.dispose(); }
+  if (view.mesh) { view.scene.remove(view.mesh); view.mesh.geometry.dispose(); view.mesh.material.map?.dispose(); view.mesh.material.dispose(); }
   view.mesh = new THREE.Mesh(geo, mat);
   view.scene.add(view.mesh);
   if (refit) {
@@ -468,7 +685,7 @@ export function openPrint({ S, viewer }) {
   };
   sizeCanvas();
   if (!view.ro) { view.ro = new ResizeObserver(sizeCanvas); view.ro.observe(canvas.parentElement); }
-  let lastKey = '', timer = 0;
+  let lastKey = '', timer = 0, updSeq = 0;
   const update = (refit = false) => {
     o = readForm(form); writeForm(form, o); saveOpts(o);
     const key = JSON.stringify([r.id, effective(o).colors, o.relief, o.label, o.width, o.exag, o.base, o.area]);
@@ -477,16 +694,21 @@ export function openPrint({ S, viewer }) {
     lastKey = key;
     busy.hidden = false;
     clearTimeout(timer);
-    timer = setTimeout(() => {
-      const G = buildGrid(src, effective(o), Math.max(0.25, o.width / PREVIEW_CELLS));
-      showPreview(G, o, refit || areaChanged);
+    const seq = ++updSeq;
+    timer = setTimeout(async () => {
+      const eo = effective(o);
+      const G = buildGrid(src, eo, Math.max(0.25, o.width / PREVIEW_CELLS));
+      const T = eo.colors === 'full' ? await bakeTexture(src, G, PREVIEW_TEX) : null;
+      if (seq !== updSeq) return;
+      showPreview(G, o, refit || areaChanged, T);
       const full = Math.max(0.25, o.width / MAX_CELLS);
       const cells = Math.round(G.size[0] / full + 1) * Math.round(G.size[1] / full + 1);
       const tris = cells * 2 + 4 * Math.sqrt(cells) * 2;
-      const mb = o.format === 'stl' ? tris * 50 / 1e6 : tris * (o.colors === 'mono' ? 14 : 18) / 1e6;
+      const mb = o.format === 'stl' ? tris * 50 / 1e6 : eo.colors === 'full' ? tris * 16 / 1e6 + 12 : tris * (eo.colors === 'mono' ? 14 : 18) / 1e6;
       info.textContent = `${Math.round(G.size[0])} × ${Math.round(G.size[1])} mm, ${Math.round(G.size[2])} mm tall · scale 1:${(Math.round(G.scale / 100) * 100).toLocaleString()} · about ${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
       legend.innerHTML = G.pal ? G.pal.map((p, i) => `<span><i style="background:${p.hex}"></i>${i + 1} ${esc(p.name)}</span>`).join('') : '';
-      note.textContent = o.format === '3mf' && o.colors !== 'mono' ? 'Colors are painted for Bambu Studio, OrcaSlicer and PrusaSlicer' : '';
+      note.textContent = eo.colors === 'full' ? 'Textured, for full-color printers: Stratasys PolyJet via GrabCAD Print, HP Multi Jet Fusion, Mimaki, and print services'
+        : o.format === '3mf' && eo.colors !== 'mono' ? 'Colors are painted for Bambu Studio, OrcaSlicer and PrusaSlicer' : '';
       busy.hidden = true;
     }, 60);
   };
@@ -500,10 +722,12 @@ export function openPrint({ S, viewer }) {
       const G = buildGrid(src, o, Math.max(0.25, o.width / MAX_CELLS));
       const M = buildMesh(G);
       const name = `${r.name} · Slope Spy`;
-      const blob = o.format === 'stl' ? toSTL(M, name) : await to3MF(M, G, name);
+      const file = `slopespy-${r.id}-${o.width}mm${o.colors === 'mono' ? '' : o.colors === 'full' ? '-fullcolor' : `-${o.colors}color`}`;
+      const T = o.colors === 'full' ? await bakeTexture(src, G, fullTex(o.width)) : null;
+      const blob = o.format === 'stl' ? toSTL(M, name) : o.format === 'obj' ? await toOBJ(M, G, T, file) : T ? await to3MFTextured(M, G, T, name) : await to3MF(M, G, name);
       const a = document.createElement('a');
       a.href = URL.createObjectURL(blob);
-      a.download = `slopespy-${r.id}-${o.width}mm${o.colors === 'mono' ? '' : `-${o.colors}color`}.${o.format}`;
+      a.download = `${file}.${o.format === 'obj' ? 'zip' : o.format}`;
       document.body.appendChild(a); a.click(); a.remove();
       setTimeout(() => URL.revokeObjectURL(a.href), 60000);
     } catch (err) { console.error(err); note.textContent = 'Export failed: ' + err.message; }
@@ -513,4 +737,4 @@ export function openPrint({ S, viewer }) {
 }
 
 // exposed for tests
-export const _internals = { buildGrid, buildMesh, toSTL, to3MF, loadOpts, factory };
+export const _internals = { buildGrid, buildMesh, toSTL, to3MF, to3MFTextured, toOBJ, bakeTexture, loadOpts, factory };
