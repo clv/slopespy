@@ -82,6 +82,93 @@ def iter_features(path):
             yield json.loads(line)
 
 
+class BoundaryFix:
+    """Correct OpenSkiMap's lift/run -> ski area assignment using the ski area boundaries.
+
+    OpenSkiMap only puts a lift or run in a landuse=winter_sports area if the boundary covers 100% of
+    it. One that pokes out by a few metres (e.g. a bottom station in the village) is then picked up by
+    a neighbouring ski area instead: Palisades' Gold Coast Funitel and Red Dog went to Alpine Meadows,
+    Ylläs lifts to Levi.
+
+    Rule here, only for features OpenSkiMap assigned somewhere (unassigned ones are mostly backcountry
+    runs and stay out): if a resort we show has a boundary holding at least half of the feature and it
+    isn't assigned there, add it, and drop any assigned area whose boundary holds less than a tenth of
+    it. Areas without a boundary (points) are never dropped. When a dropped area and an added one look
+    like the same resort under two names (OpenSkiMap keeps some duplicates, e.g. "Hemsedal" and
+    "Hemsedal skisenter"), the assignment is left alone, so a resort page never loses its lifts to its
+    own duplicate.
+    """
+    MAJORITY, STRAY = 0.5, 0.1
+
+    GENERIC = {'ski', 'skisenter', 'alpinsenter', 'skiarena', 'skiareal', 'skipark', 'skicentrum', 'resort',
+               'area', 'station', 'centre', 'center', 'centrum', 'the', 'mount', 'mt', 'stacja', 'narciarska',
+               'wintersportgebiet', 'skigebiet', 'domaine', 'hiihtokeskus', 'laskettelukeskus'}
+
+    def __init__(self, areas, shown):
+        try:
+            from shapely.geometry import shape
+            from shapely.strtree import STRtree
+            from shapely.validation import make_valid
+        except ImportError:
+            print('shapely missing: keeping OpenSkiMap ski area assignment as is')
+            self.tree = None
+            return
+        self.shape = shape
+        self.poly, self.name = {}, {}
+        for a in areas:
+            self.name[a['properties']['id']] = a['properties'].get('name') or ''
+            g = a['geometry']
+            if g and g['type'] in ('Polygon', 'MultiPolygon'):
+                try:
+                    self.poly[a['properties']['id']] = make_valid(shape(g))
+                except Exception:
+                    pass
+        self.shown = [i for i in self.poly if i in shown]
+        self.tree = STRtree([self.poly[i] for i in self.shown])
+        self.moves = []
+
+    def words(self, aid):
+        n = self.name.get(aid, '').split(',')[0].lower().translate(str.maketrans({'ø': 'o', 'æ': 'ae', 'ß': 'ss', 'ł': 'l'}))
+        n = unicodedata.normalize('NFKD', n).encode('ascii', 'ignore').decode()
+        return [w for w in re.split(r'[^a-z0-9]+', n) if len(w) > 1 and w not in self.GENERIC]
+
+    def same_resort(self, a, b):
+        # Same resort if every word of the shorter name starts (or is the start of) a word in the other.
+        wa, wb = sorted((self.words(a), self.words(b)), key=len)
+        if not wa:
+            return True
+        pre = lambda x, y: min(len(x), len(y)) >= 4 and (x.startswith(y) or y.startswith(x))
+        return all(any(w == v or pre(w, v) for v in wb) for w in wa)
+
+    def frac(self, g, aid):
+        try:
+            return g.intersection(self.poly[aid]).length / g.length
+        except Exception:
+            return 0.0
+
+    def areas_for(self, feat, assigned):
+        # Features OpenSkiMap left out of every ski area (mostly backcountry runs) stay out.
+        if self.tree is None or not assigned or not feat.get('geometry'):
+            return assigned
+        try:
+            g = self.shape(feat['geometry'])
+        except Exception:
+            return assigned
+        if g.geom_type not in ('LineString', 'MultiLineString'):
+            g = g.boundary if g.geom_type in ('Polygon', 'MultiPolygon') else g
+        if g.length == 0:
+            return assigned
+        add = [self.shown[k] for k in self.tree.query(g)
+               if self.shown[k] not in assigned and self.frac(g, self.shown[k]) >= self.MAJORITY]
+        if not add:
+            return assigned
+        keep = [a for a in assigned if a not in self.poly or self.frac(g, a) >= self.STRAY]
+        if any(self.same_resort(d, a) for d in assigned if d not in keep for a in add):
+            return assigned
+        self.moves.append((feat['properties'].get('name'), sorted(set(assigned) - set(keep)), add))
+        return keep + add
+
+
 def main():
     areas = json.load(open(os.path.join(RAW, 'ski_areas.geojson')))['features']
     cands = []
@@ -125,8 +212,11 @@ def main():
     runs = {i: [] for i in range(len(chosen))}
     lifts = {i: [] for i in range(len(chosen))}
 
+    fix = BoundaryFix(areas, ids)
+
     def member(feat):
-        return [ids[s['properties']['id']] for s in feat['properties'].get('skiAreas', []) if s['properties']['id'] in ids]
+        osm = [s['properties']['id'] for s in feat['properties'].get('skiAreas', [])]
+        return [ids[a] for a in fix.areas_for(feat, osm) if a in ids]
 
     for ft in iter_features(os.path.join(RAW, 'runs.geojson')):
         p = ft['properties']
@@ -168,6 +258,8 @@ def main():
         for i in m:
             lifts[i].append(rec)
 
+    if getattr(fix, 'moves', None):
+        print(f'boundary fix: reassigned {len(fix.moves)} runs/lifts to the ski area whose boundary holds most of them')
     os.makedirs(os.path.join(OUT, 'resorts'), exist_ok=True)
     slugs = assign_slugs(chosen)
     index = []
