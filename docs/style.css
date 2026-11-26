@@ -270,7 +270,16 @@ header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
 
 /* ---------- 3D print dialog ---------- */
 .stats button.site { background: none; border: 0; padding: 0; font: inherit; font-size: 12.5px; cursor: pointer; }
-@media (min-width: 761px) { #print .sheet-card.print-card { width: min(640px, calc(100vw - 24px)); max-height: calc(100% - 40px); } }
+@media (min-width: 761px) {
+  /* nearly full screen: big preview on the left, settings on the right */
+  #print .sheet-card.print-card { width: calc(100vw - 48px); height: calc(100% - 48px); max-height: none; }
+  #print .print-body { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(0, 1fr) 340px; grid-template-rows: auto auto 1fr; column-gap: 18px; overflow: hidden; padding-bottom: 0; }
+  #print .print-preview { grid-column: 1; grid-row: 1 / span 3; height: auto; margin: 12px 0; }
+  #print .print-info, #print .print-form, #print .print-legend { grid-column: 2; }
+  #print .print-info { margin-top: 14px; }
+  #print .print-form { grid-template-columns: 1fr 1fr; align-content: start; overflow: auto; }
+  #print .print-legend { align-self: start; }
+}
 #print .sheet-head h2 { flex: 1; font-size: 15px; margin: 0 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .print-body { overflow: auto; padding: 0 14px 4px; }
 .print-preview { position: relative; height: 280px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #1b2129; }
@@ -293,6 +302,6 @@ header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
 .btn.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 650; padding: 6px 14px; }
 .btn.primary:disabled { opacity: .6; cursor: progress; }
 @media (max-width: 760px) {
-  .print-preview { height: 220px; }
+  .print-preview { height: 46vh; }
   .print-form select { font-size: 16px; }
 }

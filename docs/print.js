@@ -124,14 +124,24 @@ function buildGrid(src, o, cell) {
   // relief textures (mm): see the proposal doc for the sizes
   const Z = Float32Array.from(Z0);
   if (o.relief) {
-    const pitch = 1.6, r2 = 0.6 * 0.6;
+    // forest: scattered trees of different sizes (jittered grid, a hash per cell), not a regular field of bumps
+    const pitch = 1.35;
+    const hash = (a, b, n) => { let h = Math.imul(a * 374761393 + b * 668265263 + n * 2246822519, 1274126177); h ^= h >>> 13; h = Math.imul(h, 1103515245); return ((h ^ (h >>> 16)) >>> 0) / 4294967296; };
     for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
       const k = j * nx + i, x = i * cell, y = j * cell;
       let dz = 0;
       if (forest[k] > 0) {
-        const ux = ((x + (Math.floor(y / pitch) % 2) * pitch / 2) % pitch) - pitch / 2, uy = (y % pitch) - pitch / 2;
-        const bump = Math.max(0, 1 - (ux * ux + uy * uy) / r2) ** 0.6;
-        dz += 0.4 * bump * forest[k] * Math.max(0, 1 - runWide[k] - lift[k]);
+        const ci = Math.floor(x / pitch), cj = Math.floor(y / pitch);
+        let tree = 0;
+        for (let b = -1; b <= 1; b++) for (let a = -1; a <= 1; a++) {
+          const u = ci + a, v = cj + b;
+          if (hash(u, v, 0) > 0.82) continue;                      // some gaps
+          const tx = (u + 0.15 + 0.7 * hash(u, v, 1)) * pitch, ty = (v + 0.15 + 0.7 * hash(u, v, 2)) * pitch;
+          const r = 0.42 + 0.38 * hash(u, v, 3), h = 0.25 + 0.35 * hash(u, v, 4);
+          const d2 = ((x - tx) ** 2 + (y - ty) ** 2) / (r * r);
+          if (d2 < 1) tree = Math.max(tree, h * (1 - d2) ** 0.7);
+        }
+        dz += tree * Math.min(1, forest[k] * 1.3) * Math.max(0, 1 - runWide[k] - lift[k]);
       }
       if (water[k]) dz += -0.3 + 0.12 * Math.sin(y * 2 * Math.PI / 0.8);
       if (run[k] > 0) {
@@ -209,9 +219,8 @@ function placeLabel(g, name, width) {
     a /= 255 * SS * SS;
     const k = (best.j0 + j) * nx + best.i0 + i;
     mask[k] = a;
-    // no textures around the letters; the letters' tops share one flat plane 1 mm above the highest ground under them
-    Z[k] = Z0[k];
-    if (a > 0) Z[k] = Math.max(Z0[k], (1 - a) * Z0[k] + a * (best.hi + 1.0));
+    // no textures around the letters; the letters follow the ground 1 mm proud of it
+    Z[k] = Z0[k] + 1.0 * a;
   }
   return mask;
 }
@@ -345,7 +354,7 @@ async function zip(files, type) {
 
 // ---------- dialog ----------
 let dlg = null, view = null;
-const PREVIEW_CELLS = 360;   // grid points along the long side for the live preview
+const PREVIEW_CELLS = 480;   // grid points along the long side for the live preview
 const MAX_CELLS = 900;       // and for the download (0.25 mm at 150-225 mm)
 
 function ensureDialog() {
@@ -367,7 +376,7 @@ function ensureDialog() {
           <label><input type="radio" name="colors" value="4"> 4 colors</label>
           <label><input type="radio" name="colors" value="8"> 8 colors</label></fieldset>
         <fieldset class="wide"><label class="check"><input type="checkbox" name="relief"> Relief textures <span class="muted">forest bumps, engraved runs, raised lifts, buildings and boundary</span></label>
-          <label class="check"><input type="checkbox" name="label"> Resort name <span class="muted">raised, in the flattest low spot</span></label></fieldset>
+          <label class="check"><input type="checkbox" name="label"> Resort name <span class="muted">raised 1 mm, following the ground in a low spot</span></label></fieldset>
         <fieldset><legend>Width</legend><select name="width">${[100, 150, 200, 250].map(v => `<option value="${v}">${v} mm</option>`).join('')}</select></fieldset>
         <fieldset><legend>Vertical</legend><select name="exag">${[1, 1.5, 2, 3].map(v => `<option value="${v}">${v}×</option>`).join('')}</select></fieldset>
         <fieldset><legend>Base</legend><select name="base">${[2, 4, 6, 10].map(v => `<option value="${v}">${v} mm</option>`).join('')}</select></fieldset>
@@ -458,6 +467,7 @@ export function openPrint({ S, viewer }) {
     view.renderer.setSize(w, h, false); view.camera.aspect = w / h; view.camera.updateProjectionMatrix();
   };
   sizeCanvas();
+  if (!view.ro) { view.ro = new ResizeObserver(sizeCanvas); view.ro.observe(canvas.parentElement); }
   let lastKey = '', timer = 0;
   const update = (refit = false) => {
     o = readForm(form); writeForm(form, o); saveOpts(o);
