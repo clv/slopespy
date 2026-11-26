@@ -37,3 +37,14 @@ python3 -m http.server -d docs 8000
 
 Resorts are ranked by total mapped downhill run length (a proxy for size that depends on OSM mapping quality).
 Linked areas (e.g. Les Trois Vallées) and their member resorts (Courchevel, Méribel…) are both listed.
+
+## Keeping the data fresh
+
+OpenSkiMap re-exports its OSM ski data every night. `.github/workflows/refresh-data.yml` runs
+`scripts/refresh_data.py` every Monday (and on demand from the Actions tab): it downloads the latest
+export, rebuilds the index and resort files, rebakes land cover / places / features only for new
+resorts and resorts whose terrain window moved, regenerates the pages, checks the result
+(resort count, must-have resorts, Cloudflare's 20,000-file limit) and commits to `main` if anything changed.
+
+Resort ids (the `/<id>` URLs) are pinned in `scripts/ids.json` (OpenSkiMap id → slug), so a resort
+keeps its URL when the ranking or its name changes; retired ids are never reused.

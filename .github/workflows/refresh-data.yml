@@ -1,0 +1,59 @@
+# Weekly refresh of the resort data from OpenSkiMap (which re-exports OSM ski data daily).
+# Commits straight to main when something changed; Cloudflare Pages then redeploys the site.
+name: Refresh resort data
+
+on:
+  schedule:
+    - cron: '0 7 * * 1'   # Mondays 07:00 UTC, a few hours after OpenSkiMap's nightly export
+  workflow_dispatch:      # "Run workflow" button on the Actions tab
+
+permissions:
+  contents: write
+
+concurrency:
+  group: refresh-data
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install dependencies
+        run: pip install numpy pillow rasterio pyarrow shapely
+
+      - name: Refresh data
+        run: python3 scripts/refresh_data.py --raw "$RUNNER_TEMP/raw" --summary "$RUNNER_TEMP/summary.md"
+
+      - name: Summary
+        if: always()
+        run: cat "$RUNNER_TEMP/summary.md" >> "$GITHUB_STEP_SUMMARY" || true
+
+      - name: Commit and push
+        run: |
+          git add -A docs scripts/ids.json
+          if git diff --cached --quiet; then echo "No changes"; exit 0; fi
+          git config user.name "slopespy-data-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          { echo "Refresh resort data from OpenSkiMap"; echo; cat "$RUNNER_TEMP/summary.md"; } > "$RUNNER_TEMP/msg"
+          git commit -q -F "$RUNNER_TEMP/msg"
+          for i in 1 2 3; do
+            git push origin HEAD:main && exit 0
+            # main moved (someone else pushed): replay on top. Resort pages are regenerated from
+            # the newest index.html so a site change made in the meantime is never undone.
+            git fetch origin main
+            git rebase -X theirs origin/main || { git rebase --abort; exit 1; }
+            git reset -q --soft origin/main
+            python3 scripts/build_pages.py
+            git add -A docs scripts/ids.json
+            git commit -q -F "$RUNNER_TEMP/msg"
+          done
+          exit 1

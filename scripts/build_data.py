@@ -19,6 +19,9 @@ from bake_terrain import window
 RAW = sys.argv[1] if len(sys.argv) > 1 else '/home/user/data/raw'
 OUT = sys.argv[2] if len(sys.argv) > 2 else os.path.join(os.path.dirname(__file__), '..', 'docs', 'data')
 TOP_N = int(os.environ.get('TOP_N', '300'))
+# Stable URL ids: OpenSkiMap ski-area id -> our slug, kept across rebuilds so /<id> links never move.
+# Every slug ever handed out stays reserved, so a resort that disappears never has its id reused.
+IDS = os.environ.get('IDS', os.path.join(os.path.dirname(__file__), 'ids.json'))
 
 # Well-known resorts that are small by mapped run length but people expect to find.
 # Matched as case-insensitive substrings of the OpenSkiMap name; the largest match is used.
@@ -166,7 +169,8 @@ def main():
             lifts[i].append(rec)
 
     os.makedirs(os.path.join(OUT, 'resorts'), exist_ok=True)
-    index, used_slugs = [], set()
+    slugs = assign_slugs(chosen)
+    index = []
     for i, (km, a, nm, country) in enumerate(chosen):
         p = a['properties']
         st = p['statistics']
@@ -188,14 +192,7 @@ def main():
         if not xs:
             continue
         bbox = [min(xs), min(ys), max(xs), max(ys)]
-        s = slug(nm)
-        if s == 'resort':  # name has no latin characters
-            s = f"resort-{country.lower()}-{p['id'][:6]}"
-        base, k = s, 1
-        while s in used_slugs:
-            k += 1
-            s = f"{base}-{country.lower()}" if k == 2 else f"{base}-{k}"
-        used_slugs.add(s)
+        s = slugs[p['id']]
         byd = st['runs']['byActivity']['downhill']['byDifficulty']
         diff_km = {k: round(v.get('lengthInKm', 0), 1) for k, v in byd.items()}
         liftcount = sum(v.get('count', 0) for v in (st.get('lifts', {}).get('byType') or {}).values())
@@ -219,7 +216,52 @@ def main():
             json.dump({**entry, 'win': win, 'boundary': boundary, 'runs': runs[i], 'lifts': lifts[i]}, f, separators=(',', ':'), ensure_ascii=False)
     with open(os.path.join(OUT, 'index.json'), 'w') as f:
         json.dump(index, f, separators=(',', ':'), ensure_ascii=False)
+    keep = {e['id'] + '.json' for e in index}
+    for fn in os.listdir(os.path.join(OUT, 'resorts')):  # resorts that are gone from OpenSkiMap
+        if fn.endswith('.json') and fn not in keep:
+            os.remove(os.path.join(OUT, 'resorts', fn))
     print(len(index), 'resorts written')
+
+
+def assign_slugs(chosen):
+    """Give each chosen ski area its id: the one it had before if known, else a fresh unused slug."""
+    idmap = json.load(open(IDS)) if os.path.exists(IDS) else {}
+    reserved = set(idmap.values())
+    out, taken = {}, set()
+    for _, a, _, _ in chosen:
+        s = idmap.get(a['properties']['id'])
+        if s and s not in taken:
+            out[a['properties']['id']] = s
+            taken.add(s)
+    # OpenSkiMap occasionally re-keys an area (e.g. its OSM source changed). Reclaim the old id when
+    # an unclaimed one matches by name and country.
+    orphans = {}
+    for osk, s in idmap.items():
+        if s in taken:
+            continue
+        path = os.path.join(OUT, 'resorts', s + '.json')
+        if os.path.exists(path):
+            r = json.load(open(path))
+            orphans.setdefault((r['name'].lower(), r['country']), s)
+    for _, a, nm, country in chosen:
+        osk = a['properties']['id']
+        if osk in out:
+            continue
+        s = orphans.pop((nm.lower(), country), None)
+        if not s:
+            s = slug(nm)
+            if s == 'resort':  # name has no latin characters
+                s = f"resort-{country.lower()}-{osk[:6]}"
+            base, k = s, 1
+            while s in taken or s in reserved:
+                k += 1
+                s = f"{base}-{country.lower()}" if k == 2 else f"{base}-{k}"
+        out[osk] = s
+        taken.add(s)
+        idmap[osk] = s
+    with open(IDS, 'w') as f:
+        json.dump(dict(sorted(idmap.items())), f, indent=0, ensure_ascii=False)
+    return out
 
 
 if __name__ == '__main__':
