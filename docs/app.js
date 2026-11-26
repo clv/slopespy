@@ -728,6 +728,7 @@ function buildSide(S, data, terrain, landcover, features, places) {
   S.footprint = [Math.max(...xs) - Math.min(...xs), Math.max(...zs) - Math.min(...zs)];
   S.area = data.boundary ? polyArea(data.boundary, toX, toZ) : null;
   S.website = data.website || null;
+  S.src = { data, terrain, landcover, features, conv: CONVENTIONS[data.conv] || CONVENTIONS.europe };   // for the 3D-print export
   S.osk = /^[0-9a-f]{40}$/.test(data.osk || '') ? data.osk : null;
   S.extent = Math.max((px1 - px0), (py1 - py0)) * (40075016 * Math.cos(cy * DEG) / worldPx(z));
   S.mid = ((data.top ?? hmax) + (data.base ?? hmin)) / 2;
@@ -1394,6 +1395,11 @@ function applyVertical() {
 const fmt = (v, d = 0) => v == null || !isFinite(v) ? '–' : v.toLocaleString(undefined, { maximumFractionDigits: d, minimumFractionDigits: d });
 function renderPanel(side, r, S) {
   const p = panels[side];
+  p.onclick ??= e => {
+    if (!e.target.closest('.print')) return;
+    const S = sides[side];
+    if (S.src) import('./print.js').then(m => m.openPrint({ S, viewer: { exag: settings.exag } })).catch(err => console.error(err));
+  };
   $('.pick', p).innerHTML = `<span class="nm">${esc(r.name)}</span><svg class="srch" viewBox="0 0 16 16" aria-hidden="true"><circle cx="6.8" cy="6.8" r="4.6"/><path d="m10.3 10.3 4 4"/></svg><small>${esc([r.region, r.countryName].filter(Boolean).join(', '))}</small>`;
   $('.pick', p).title = 'Choose another resort';
   const vert = r.top != null && r.base != null ? r.top - r.base : null;
@@ -1413,6 +1419,7 @@ function renderPanel(side, r, S) {
   try { const u = new URL(S?.website || ''); if (/^https?:$/.test(u.protocol)) links.push(`<a class="site" href="${esc(u.href)}" target="_blank" rel="noopener">${esc(u.hostname.replace(/^www\./, ''))} ↗</a>`); } catch {}
   if (S?.osk) links.push(`<a class="site" href="https://openskimap.org/?obj=${S.osk}" target="_blank" rel="noopener">OpenSkiMap ↗</a>`);
   else if (S) links.push(`<a class="site" href="https://www.google.com/maps/search/?api=1&amp;query=${encodeURIComponent([r.name, r.region, r.countryName].filter(Boolean).join(', '))}" target="_blank" rel="noopener">Google Maps ↗</a>`);
+  if (S?.src) links.push(`<button class="site print" type="button" title="Download a 3D-printable model">3D print</button>`);
   $('.stats', p).innerHTML = rows.map(([k, v, x]) => `<dt${x ? ' class="x"' : ''}>${k}</dt><dd${x ? ' class="x"' : ''}>${v}</dd>`).join('')
     + (links.length ? `<dd class="site-row">${links.join('')}</dd>` : '');
   updateLegend();

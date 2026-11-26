@@ -267,3 +267,32 @@ header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
 .results li.h1 .v { color: var(--muted); font-weight: 400; letter-spacing: 0; text-transform: none; }
 .results li.more[data-near] { padding-left: 8px; }
 .pop-head[hidden] { display: none; }
+
+/* ---------- 3D print dialog ---------- */
+.stats button.site { background: none; border: 0; padding: 0; font: inherit; font-size: 12.5px; cursor: pointer; }
+@media (min-width: 761px) { #print .sheet-card.print-card { width: min(640px, calc(100vw - 24px)); max-height: calc(100% - 40px); } }
+#print .sheet-head h2 { flex: 1; font-size: 15px; margin: 0 4px; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.print-body { overflow: auto; padding: 0 14px 4px; }
+.print-preview { position: relative; height: 280px; margin: 10px 0 6px; border-radius: 8px; overflow: hidden; background: #1b2129; }
+.print-preview canvas { width: 100%; height: 100%; display: block; touch-action: none; }
+.print-busy { position: absolute; right: 8px; top: 6px; color: var(--muted); font-size: 12px; }
+.print-info { margin: 0 0 8px; color: var(--muted); font-size: 12.5px; font-variant-numeric: tabular-nums; }
+.print-form { display: grid; grid-template-columns: repeat(auto-fill, minmax(170px, 1fr)); gap: 8px 14px; }
+.print-form fieldset { border: 0; margin: 0; padding: 0; min-width: 0; display: flex; flex-wrap: wrap; gap: 2px 12px; align-items: center; }
+.print-form fieldset.wide { grid-column: 1 / -1; }
+.print-form fieldset.off { opacity: .45; }
+.print-form legend { float: left; width: 100%; color: var(--muted); font-size: 11.5px; text-transform: uppercase; letter-spacing: .06em; margin-bottom: 2px; }
+.print-form label { display: inline-flex; align-items: center; gap: 5px; cursor: pointer; white-space: nowrap; }
+.print-form label.check { white-space: normal; }
+.print-form .muted { color: var(--muted); font-size: 12px; }
+.print-form select { background: var(--input); color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 4px 6px; font: inherit; }
+.print-legend { display: flex; flex-wrap: wrap; gap: 4px 12px; margin: 10px 0 2px; font-size: 12px; color: var(--muted); }
+.print-legend i { display: inline-block; width: 11px; height: 11px; border-radius: 3px; margin-right: 5px; vertical-align: -1px; border: 1px solid rgba(255,255,255,.25); }
+.print-foot { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-top: 1px solid var(--line); }
+.print-note { flex: 1; font-size: 12px; color: var(--muted); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #06121f; font-weight: 650; padding: 6px 14px; }
+.btn.primary:disabled { opacity: .6; cursor: progress; }
+@media (max-width: 760px) {
+  .print-preview { height: 220px; }
+  .print-form select { font-size: 16px; }
+}
