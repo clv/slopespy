@@ -1,0 +1,11 @@
+// Cloudflare Workers config for slopespy.com: a static site served from docs/ (no build step).
+{
+  "$schema": "node_modules/wrangler/config-schema.json",
+  "name": "slopespy",
+  "compatibility_date": "2026-11-01",
+  "assets": {
+    "directory": "./docs"
+  },
+  // Lets Workers Builds publish a preview of every non-main branch (`npx wrangler preview`).
+  "previews": {}
+}

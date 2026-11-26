@@ -14,3 +14,6 @@ Every page declares `https://slopespy.com/...` as its canonical URL. Once the do
 
 Terrain tiles load straight from the public AWS Terrain Tiles bucket and are cached in the visitor's
 browser (Cache Storage, up to about 4,000 tiles), so repeat visits don't download them again.
+
+`wrangler.jsonc` at the repo root tells Workers Builds to serve `docs/` as static assets. Its empty
+`previews` block lets non-main branches build a preview (`npx wrangler preview`).
