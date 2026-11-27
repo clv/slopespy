@@ -289,7 +289,7 @@ function engraveSpecs(G, src, o) {
   }
   if (!lines) return null;                                                       // no room for legible text
   const lh = fs * 1.32, depthMM = Math.min(ENGRAVE, o.base * 0.4);
-  const SS = 3, cv = new OffscreenCanvas(bw * SS, bh * SS), x = cv.getContext('2d', { willReadFrequently: true });
+  const SS = 4, cv = new OffscreenCanvas(bw * SS + 1, bh * SS + 1), x = cv.getContext('2d', { willReadFrequently: true });
   const k = SS / cell;
   x.translate(bw * SS, 0); x.scale(-1, 1);                                        // mirrored: read from below
   x.fillStyle = x.strokeStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
@@ -297,16 +297,32 @@ function engraveSpecs(G, src, o) {
   lines.forEach((t, i) => {
     const sz = (i ? 1 : TITLE) * fs, rowH = i ? lh : lh * TITLE;
     x.font = font(i ? 700 : 800, sz * k);
-    x.lineWidth = sz * 0.025 * k; x.letterSpacing = `${(sz * 0.06 * k).toFixed(2)}px`;   // a touch heavier, and air between letters
+    x.lineWidth = sz * 0.045 * k; x.letterSpacing = `${(sz * 0.06 * k).toFixed(2)}px`;   // a touch heavier, and air between letters
     const cy = (y + rowH / 2) * k;
     x.fillText(t, bw * SS / 2, cy); x.strokeText(t, bw * SS / 2, cy);
     y += rowH + (i === 0 ? lh * 0.3 : 0);
   });
-  const px = x.getImageData(0, 0, bw * SS, bh * SS).data, depth = new Float32Array((bw + 1) * (bh + 1));
-  for (let j = 0; j < bh; j++) for (let i = 0; i < bw; i++) {
-    let a = 0;
-    for (let b = 0; b < SS; b++) for (let c = 0; c < SS; c++) a += px[4 * ((j * SS + b) * bw * SS + i * SS + c) + 3];
-    depth[j * (bw + 1) + i] = depthMM * Math.min(1, 1.3 * a / (255 * SS * SS));   // full depth except at letter edges
+  // V-grooves instead of flat-bottomed recesses: the groove deepens 1.7 mm per mm in from the letter's edge
+  // (walls 60° from horizontal) up to the full depth, so its "ceiling" (the print sits on it) needs no support.
+  const W = bw * SS + 1, H = bh * SS + 1, px = x.getImageData(0, 0, W, H).data, d = new Float32Array(W * H);
+  for (let q = 0; q < W * H; q++) d[q] = px[4 * q + 3] > 127 ? 1e9 : 0;
+  const D2 = Math.SQRT2;
+  for (let j = 0; j < H; j++) for (let i = 0; i < W; i++) {
+    const q = j * W + i; if (!d[q]) continue; let v = d[q];
+    if (i > 0) v = Math.min(v, d[q - 1] + 1);
+    if (j > 0) { v = Math.min(v, d[q - W] + 1); if (i > 0) v = Math.min(v, d[q - W - 1] + D2); if (i < W - 1) v = Math.min(v, d[q - W + 1] + D2); }
+    d[q] = v;
+  }
+  for (let j = H - 1; j >= 0; j--) for (let i = W - 1; i >= 0; i--) {
+    const q = j * W + i; if (!d[q]) continue; let v = d[q];
+    if (i < W - 1) v = Math.min(v, d[q + 1] + 1);
+    if (j < H - 1) { v = Math.min(v, d[q + W] + 1); if (i < W - 1) v = Math.min(v, d[q + W + 1] + D2); if (i > 0) v = Math.min(v, d[q + W - 1] + D2); }
+    d[q] = v;
+  }
+  const depth = new Float32Array((bw + 1) * (bh + 1)), slope = Math.tan(60 * DEG);
+  for (let j = 0; j <= bh; j++) for (let i = 0; i <= bw; i++) {
+    const dist = Math.max(0, d[j * SS * W + i * SS] - 0.5) / SS * cell;   // mm from the letter's edge
+    depth[j * (bw + 1) + i] = Math.min(depthMM, dist * slope);
   }
   return { i0: bi0, j0: bj0, w: bw, h: bh, depth, lines, fs };
 }
