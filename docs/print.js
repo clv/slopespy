@@ -13,7 +13,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 // ---------- settings (remembered per browser) ----------
 const KEY = 'sc.print';
-const factory = viewer => ({ format: 'stl', colors: 'mono', relief: true, label: true, width: 150, exag: viewer.exag, area: 'model', base: 4 });
+const factory = viewer => ({ format: 'stl', colors: 'mono', relief: true, label: true, width: 150, size: 'width', exag: viewer.exag, area: 'model', base: 4 });
 function loadOpts(viewer) {
   let o = {};
   try { o = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch {}
@@ -35,11 +35,9 @@ function palette(mode, conv) {
 }
 const RUN_LEVEL = { novice: 0, easy: 0, intermediate: 1, advanced: 2, expert: 2, freeride: 2, extreme: 2 };
 
-// ---------- the model ----------
-// Returns heights (mm) on a regular grid plus a colour slot per grid point.
-function buildGrid(src, o, cell) {
-  const { data, terrain, landcover, features } = src;
-  const z = terrain.z, crop = terrain.crop;
+// The area printed, in mercator pixels at the terrain's zoom: the whole terrain, or runs and lifts plus a margin
+function regionOf(src, o) {
+  const { data, terrain } = src, z = terrain.z, crop = terrain.crop;
   let [px0, py0, px1, py1] = crop;
   if (o.area === 'ski') {   // runs and lifts plus a 20% margin
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
@@ -50,6 +48,23 @@ function buildGrid(src, o, cell) {
       px0 = Math.max(crop[0], x0 - mx); py0 = Math.max(crop[1], y0 - my); px1 = Math.min(crop[2], x1 + mx); py1 = Math.min(crop[3], y1 + my);
     }
   }
+  return { px0, py0, px1, py1 };
+}
+// Fixed scales (1:n) make prints of different resorts comparable; the width then follows from the area
+const SCALES = [25000, 50000, 75000, 100000, 150000];
+function resolveWidth(src, o) {
+  if (o.size === 'width' || !+o.size) return o;
+  const { px0, py0, px1, py1 } = regionOf(src, o), z = src.terrain.z;
+  const mPerPx = 40075016 * Math.cos(px2lat((py0 + py1) / 2, z) * DEG) / worldPx(z);
+  return { ...o, width: Math.max(px1 - px0, py1 - py0) * mPerPx * 1000 / +o.size };
+}
+
+// ---------- the model ----------
+// Returns heights (mm) on a regular grid plus a colour slot per grid point.
+function buildGrid(src, o, cell) {
+  const { data, terrain, landcover, features } = src;
+  const z = terrain.z, crop = terrain.crop;
+  const { px0, py0, px1, py1 } = regionOf(src, o);
   const spanX = px1 - px0, spanY = py1 - py0;
   const mmPerPx = o.width / Math.max(spanX, spanY);
   const nx = Math.round(spanX * mmPerPx / cell) + 1, ny = Math.round(spanY * mmPerPx / cell) + 1, N = nx * ny;
@@ -581,7 +596,10 @@ function ensureDialog() {
           <label><input type="radio" name="colors" value="full"> Full color</label></fieldset>
         <fieldset class="wide"><label class="check"><input type="checkbox" name="relief"> Relief textures <span class="muted">forest bumps, engraved runs, raised lifts, buildings and boundary</span></label>
           <label class="check"><input type="checkbox" name="label"> Resort name <span class="muted">raised 1 mm, following the ground in a low spot</span></label></fieldset>
-        <fieldset><legend>Width</legend><select name="width">${[100, 150, 200, 250].map(v => `<option value="${v}">${v} mm</option>`).join('')}</select></fieldset>
+        <fieldset class="wide"><legend>Size</legend>
+          <label><input type="radio" name="size" value="width"> Width <select name="width">${[100, 150, 200, 250].map(v => `<option value="${v}">${v} mm</option>`).join('')}</select></label>
+          ${SCALES.map(v => `<label><input type="radio" name="size" value="${v}"> 1:${v.toLocaleString('en-US')}</label>`).join('')}
+          <span class="muted size-hint">A fixed scale keeps prints of different resorts comparable</span></fieldset>
         <fieldset><legend>Vertical</legend><select name="exag">${[1, 1.5, 2, 3].map(v => `<option value="${v}">${v}×</option>`).join('')}</select></fieldset>
         <fieldset><legend>Base</legend><select name="base">${[2, 4, 6, 10].map(v => `<option value="${v}">${v} mm</option>`).join('')}</select></fieldset>
         <fieldset><legend>Area</legend>
@@ -603,7 +621,7 @@ function readForm(form) {
   const pick = n => form.querySelector(`[name="${n}"]:checked`)?.value;   // (disabled radios still count)
   const format = pick('format');
   const colors = format === '3mf' && form.dataset.format === '3mf' ? pick('colors') || 'mono' : form.dataset.colors || 'mono';
-  return { format, colors, relief: form.relief.checked, label: form.label.checked, width: +form.width.value, exag: +form.exag.value, base: +form.base.value, area: pick('area') };
+  return { format, colors, relief: form.relief.checked, label: form.label.checked, width: +form.width.value, size: pick('size') || 'width', exag: +form.exag.value, base: +form.base.value, area: pick('area') };
 }
 // STL carries no colour, so it always prints single-colour (the colour choice is kept for when 3MF is picked again)
 // OBJ is for full-colour printers (Stratasys PolyJet, HP MJF, Mimaki), so it always carries the texture
@@ -611,8 +629,9 @@ const effective = o => o.format === 'stl' ? { ...o, colors: 'mono' } : o.format 
 function writeForm(form, o) {
   form.dataset.colors = o.colors;   // the 3MF colour choice, kept while STL or OBJ force their own
   form.dataset.format = o.format;
-  for (const k of ['format', 'colors', 'area']) { const el = form.querySelector(`[name="${k}"][value="${o[k]}"]`); if (el) el.checked = true; }
+  for (const k of ['format', 'colors', 'area', 'size']) { const el = form.querySelector(`[name="${k}"][value="${o[k]}"]`); if (el) el.checked = true; }
   form.relief.checked = o.relief; form.label.checked = o.label;
+  form.width.disabled = o.size !== 'width';
   for (const k of ['width', 'exag', 'base']) form[k].value = String(o[k]);
   for (const el of form.querySelectorAll('[name="colors"]')) el.disabled = o.format === 'stl' || (o.format === 'obj' && el.value !== 'full');
   { const el = form.querySelector(`[name="colors"][value="${effective(o).colors}"]`); if (el) el.checked = true; }
@@ -688,6 +707,7 @@ export function openPrint({ S, viewer }) {
   let lastKey = '', timer = 0, updSeq = 0;
   const update = (refit = false) => {
     o = readForm(form); writeForm(form, o); saveOpts(o);
+    o = resolveWidth(src, o);
     const key = JSON.stringify([r.id, effective(o).colors, o.relief, o.label, o.width, o.exag, o.base, o.area]);
     if (key === lastKey && !refit) return;
     const areaChanged = !lastKey || JSON.parse(lastKey)[7] !== o.area || JSON.parse(lastKey)[4] !== o.width;
@@ -705,7 +725,7 @@ export function openPrint({ S, viewer }) {
       const cells = Math.round(G.size[0] / full + 1) * Math.round(G.size[1] / full + 1);
       const tris = cells * 2 + 4 * Math.sqrt(cells) * 2;
       const mb = o.format === 'stl' ? tris * 50 / 1e6 : eo.colors === 'full' ? tris * 16 / 1e6 + 12 : tris * (eo.colors === 'mono' ? 14 : 18) / 1e6;
-      info.textContent = `${Math.round(G.size[0])} × ${Math.round(G.size[1])} mm, ${Math.round(G.size[2])} mm tall · scale 1:${(Math.round(G.scale / 100) * 100).toLocaleString()} · about ${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB`;
+      info.textContent = `${Math.round(G.size[0])} × ${Math.round(G.size[1])} mm, ${Math.round(G.size[2])} mm tall · scale 1:${(Math.round(G.scale / 100) * 100).toLocaleString()} · about ${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB${Math.max(G.size[0], G.size[1]) > 256 ? ' · bigger than a 256 mm print bed' : ''}`;
       legend.innerHTML = G.pal ? G.pal.map((p, i) => `<span><i style="background:${p.hex}"></i>${i + 1} ${esc(p.name)}</span>`).join('') : '';
       note.textContent = eo.colors === 'full' ? 'Textured, for full-color printers: Stratasys PolyJet via GrabCAD Print, HP Multi Jet Fusion, Mimaki, and print services'
         : o.format === '3mf' && eo.colors !== 'mono' ? 'Colors are painted for Bambu Studio, OrcaSlicer and PrusaSlicer' : '';
@@ -718,11 +738,11 @@ export function openPrint({ S, viewer }) {
     const btn = e.currentTarget; btn.disabled = true; const label = btn.textContent; btn.textContent = 'Building…';
     await new Promise(res => setTimeout(res, 30));
     try {
-      o = effective(readForm(form));
+      o = resolveWidth(src, effective(readForm(form)));
       const G = buildGrid(src, o, Math.max(0.25, o.width / MAX_CELLS));
       const M = buildMesh(G);
       const name = `${r.name} · Slope Spy`;
-      const file = `slopespy-${r.id}-${o.width}mm${o.colors === 'mono' ? '' : o.colors === 'full' ? '-fullcolor' : `-${o.colors}color`}`;
+      const file = `slopespy-${r.id}-${o.size === 'width' ? `${o.width}mm` : `1to${o.size / 1000}k`}${o.colors === 'mono' ? '' : o.colors === 'full' ? '-fullcolor' : `-${o.colors}color`}`;
       const T = o.colors === 'full' ? await bakeTexture(src, G, fullTex(o.width)) : null;
       const blob = o.format === 'stl' ? toSTL(M, name) : o.format === 'obj' ? await toOBJ(M, G, T, file) : T ? await to3MFTextured(M, G, T, name) : await to3MF(M, G, name);
       const a = document.createElement('a');
