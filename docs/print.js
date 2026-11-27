@@ -250,24 +250,41 @@ function specLines(G, src, o) {
 function engraveSpecs(G, src, o) {
   const { nx, ny, cell } = G;
   if (o.base < 1.5) return null;
-  const lines = specLines(G, src, o);
+  const all = specLines(G, src, o);
   const font = (wt, px) => `${wt} ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   const m = new OffscreenCanvas(8, 8).getContext('2d');
-  const widthAt = fs => Math.max(...lines.map((t, i) => { m.font = font(i ? 600 : 750, (i ? 1 : 1.35) * fs); return m.measureText(t).width; }));
-  let fs = Math.min(3.2, Math.max(2.2, G.size[0] * 0.02));                        // letter height, mm
-  fs = Math.min(fs, G.size[0] * 0.86 / (widthAt(100) / 100));
-  const lh = fs * 1.45, hmm = lh * (lines.length + 0.35) + fs * 0.6;
-  if (fs < 1.8 || hmm > G.size[1] * 0.9) return null;                             // too small to print legibly
-  const bw = Math.ceil((widthAt(fs) + 2 * fs) / cell), bh = Math.ceil(hmm / cell);
-  let bi0 = Math.round((nx - 1 - bw) / 2), bj0 = Math.round((ny - 1 - bh) / 2);
-  if (G.inside) {   // a cut print: centre the panel on the shape, and it has to fit inside it
-    let sx = 0, sy = 0, n = 0;
-    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (G.inside[j * nx + i]) { sx += i; sy += j; n++; }
-    bi0 = Math.round(sx / n - bw / 2); bj0 = Math.round(sy / n - bh / 2);
-    if (bi0 < 2 || bj0 < 2 || bi0 + bw > nx - 3 || bj0 + bh > ny - 3) return null;
-    for (let j = bj0 - 1; j <= bj0 + bh + 1; j++) for (let i = bi0 - 1; i <= bi0 + bw + 1; i++) if (!G.inside[j * nx + i]) return null;
+  const widthOf = (ls, fs) => Math.max(...ls.map((t, i) => { m.font = font(i ? 600 : 750, (i ? 1 : 1.35) * fs); return m.measureText(t).width; }));
+  // a narrower layout: long lines broken at their middle separator
+  const split = all.flatMap((t, i) => { const p = t.split('  ·  '); if (!i || p.length < 2) return [t]; const h = Math.ceil(p.length / 2); return [p.slice(0, h).join('  ·  '), p.slice(h).join('  ·  ')]; });
+  // where the panel may go: inside the outline (cut prints) with a cell to spare, as near the middle as it can be
+  const sOut = (() => { if (!G.inside) return null; const t = new Float64Array((nx + 1) * (ny + 1));
+    for (let j = 0; j < ny; j++) { let row = 0; for (let i = 0; i < nx; i++) { row += G.inside[j * nx + i] ? 0 : 1; t[(j + 1) * (nx + 1) + i + 1] = t[j * (nx + 1) + i + 1] + row; } }
+    return (i0, j0, w, h) => t[(j0 + h) * (nx + 1) + i0 + w] - t[j0 * (nx + 1) + i0 + w] - t[(j0 + h) * (nx + 1) + i0] + t[j0 * (nx + 1) + i0]; })();
+  let cx = (nx - 1) / 2, cy = (ny - 1) / 2;
+  if (G.inside) { let sx = 0, sy = 0, n = 0; for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (G.inside[j * nx + i]) { sx += i; sy += j; n++; } cx = sx / n; cy = sy / n; }
+  const fit = (bw, bh) => {
+    let best = null;
+    const step = Math.max(1, Math.round(1 / cell));
+    for (let j0 = 2; j0 + bh < ny - 2; j0 += step) for (let i0 = 2; i0 + bw < nx - 2; i0 += step) {
+      if (sOut && sOut(i0 - 1, j0 - 1, bw + 3, bh + 3)) continue;
+      const d = (i0 + bw / 2 - cx) ** 2 + (j0 + bh / 2 - cy) ** 2;
+      if (!best || d < best.d) best = { d, i0, j0 };
+    }
+    return best;
+  };
+  let lines = null, fs = 0, bw = 0, bh = 0, bi0 = 0, bj0 = 0;
+  const start = Math.min(3.2, Math.max(2.2, G.size[0] * 0.02));
+  search: for (let f = start; f >= 1.6 - 1e-9; f -= 0.2) for (const ls of [all, split, [all[0], all[2], all[4]], [all[0], all[2]]]) {   // all of it, wrapped, or the essentials
+    const lh = f * 1.45, wmm = widthOf(ls, f) + 2 * f, hmm = lh * (ls.length + 0.35) + f * 0.6;
+    const w = Math.ceil(wmm / cell), h = Math.ceil(hmm / cell);
+    if (w + 4 >= nx || h + 4 >= ny) continue;
+    const p = G.inside ? fit(w, h) : { i0: Math.round((nx - 1 - w) / 2), j0: Math.round((ny - 1 - h) / 2) };
+    if (!p) continue;
+    lines = ls; fs = f; bw = w; bh = h; bi0 = p.i0; bj0 = p.j0;
+    break search;
   }
-  if (bi0 < 2 || bj0 < 2) return null;
+  if (!lines) return null;                                                       // no room for legible text
+  const lh = fs * 1.45;
   const SS = 3, cv = new OffscreenCanvas(bw * SS, bh * SS), x = cv.getContext('2d', { willReadFrequently: true });
   const k = SS / cell;
   x.translate(bw * SS, 0); x.scale(-1, 1);                                        // mirrored: read from below
@@ -282,26 +299,28 @@ function engraveSpecs(G, src, o) {
     for (let b = 0; b < SS; b++) for (let c = 0; c < SS; c++) a += px[4 * ((j * SS + b) * bw * SS + i * SS + c) + 3];
     depth[j * (bw + 1) + i] = ENGRAVE * a / (255 * SS * SS);
   }
-  return { i0: bi0, j0: bj0, w: bw, h: bh, depth, lines };
+  return { i0: bi0, j0: bj0, w: bw, h: bh, depth, lines, fs };
 }
 
 // The resort's name, raised 1 mm, in the flattest low-lying spot that no run or lift crosses (usually a valley floor).
 // Smooths away the textures under it so the letters read. Returns the letter mask (0..1 per grid point).
-function placeLabel(g, name, width, at, rot = 0) {   // at: centre in mm, to reuse a spot found earlier; rot: quarter turns
+function placeLabel(g, name, width, at, rot = 0) {   // at: centre and size in mm, to reuse a spot found earlier; rot: quarter turns
   const { nx, ny, cell, Z0, Z } = g;
-  let fs = Math.max(4, width * 0.045) / cell;                    // letter height in cells
   const font = px => `700 ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   const meas = new OffscreenCanvas(8, 8).getContext('2d');
   meas.font = font(100);
   const per100 = meas.measureText(name).width / 100;
-  fs = Math.min(fs, (rot % 2 ? ny : nx) * 0.8 / Math.max(1, per100));   // long names get smaller letters
-  const tw = Math.ceil(per100 * fs + fs * 0.8), th = Math.ceil(fs * 1.6);   // the text's own width and height
-  const bw = rot % 2 ? th : tw, bh = rot % 2 ? tw : th;                      // its footprint on the grid
+  let fs0 = Math.max(4, width * 0.045) / cell;                    // letter height in cells
+  fs0 = Math.min(fs0, (rot % 2 ? ny : nx) * 0.8 / Math.max(1, per100));   // long names get smaller letters
+  const dims = fs => {
+    const tw = Math.ceil(per100 * fs + fs * 0.8), th = Math.ceil(fs * 1.6);   // the text's own width and height
+    return rot % 2 ? [th, tw] : [tw, th];                                      // its footprint on the grid
+  };
   const margin = Math.ceil(2 / cell);
-  if (bw + 2 * margin >= nx || bh + 2 * margin >= ny) return null;
-  let zlo = Infinity, zhi = -Infinity;
-  for (let k = 0; k < Z0.length; k++) { if (Z0[k] < zlo) zlo = Z0[k]; if (Z0[k] > zhi) zhi = Z0[k]; }
-  // Summed-area tables: lifts (grown by ~2 mm so their names clear it too, never crossed), runs (avoided strongly), height and height²
+  let zlo = Infinity;
+  for (let k = 0; k < Z0.length; k++) if (Z0[k] < zlo) zlo = Z0[k];
+  // Summed-area tables: lifts (grown by ~2 mm so their names clear it too, never crossed), runs (avoided strongly),
+  // off the print (for a cut shape), height and height²
   const grow = Math.max(1, Math.round(2 / cell));
   const liftD = new Uint8Array(nx * ny);
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (g.lift[j * nx + i] > 0.2)
@@ -309,18 +328,40 @@ function placeLabel(g, name, width, at, rot = 0) {   // at: centre in mm, to reu
   const sat = f => { const t = new Float64Array((nx + 1) * (ny + 1));
     for (let j = 0; j < ny; j++) { let row = 0; for (let i = 0; i < nx; i++) { row += f(j * nx + i); t[(j + 1) * (nx + 1) + i + 1] = t[j * (nx + 1) + i + 1] + row; } }
     return (i0, j0, w, h) => t[(j0 + h) * (nx + 1) + i0 + w] - t[j0 * (nx + 1) + i0 + w] - t[(j0 + h) * (nx + 1) + i0] + t[j0 * (nx + 1) + i0]; };
-  if (g.inside) for (let k = 0; k < liftD.length; k++) if (!g.inside[k]) liftD[k] = 1;   // stay on the print
   const sLift = sat(k => liftD[k]), sRun = sat(k => g.run[k] > 0.3 ? 1 : 0), sZ = sat(k => Z0[k]), sZ2 = sat(k => Z0[k] * Z0[k]);
-  const step = Math.max(1, Math.round(fs / 4)), n = (bw + 1) * (bh + 1);
-  let best = at ? { i0: Math.max(0, Math.min(nx - 1 - bw, Math.round(at.x / cell - bw / 2))), j0: Math.max(0, Math.min(ny - 1 - bh, Math.round(at.y / cell - bh / 2))) } : null;
-  if (!at) for (let j0 = margin; j0 + bh < ny - margin; j0 += step) for (let i0 = margin; i0 + bw < nx - margin; i0 += step) {
-    const lifts = sLift(i0, j0, bw + 1, bh + 1), runs = sRun(i0, j0, bw + 1, bh + 1) / n;
-    const mean = sZ(i0, j0, bw + 1, bh + 1) / n, sd = Math.sqrt(Math.max(0, sZ2(i0, j0, bw + 1, bh + 1) / n - mean * mean));
-    // flat, low, clear of runs; any lift is disqualifying unless nothing else is free
-    const score = 3 * sd + 0.5 * (mean - zlo) + 60 * runs + (lifts ? 1e6 + lifts : 0);
-    if (!best || score < best.score) best = { score, i0, j0 };
+  const sOut = g.inside ? sat(k => g.inside[k] ? 0 : 1) : () => 0;
+  const search = (fs, offOk) => {
+    const [bw, bh] = dims(fs);
+    if (bw + 2 * margin >= nx || bh + 2 * margin >= ny) return null;
+    const step = Math.max(1, Math.round(fs / 4)), n = (bw + 1) * (bh + 1);
+    let best = null;
+    for (let j0 = margin; j0 + bh < ny - margin; j0 += step) for (let i0 = margin; i0 + bw < nx - margin; i0 += step) {
+      const lifts = sLift(i0, j0, bw + 1, bh + 1), runs = sRun(i0, j0, bw + 1, bh + 1) / n, out = sOut(i0 - 1, j0 - 1, bw + 3, bh + 3);
+      const mean = sZ(i0, j0, bw + 1, bh + 1) / n, sd = Math.sqrt(Math.max(0, sZ2(i0, j0, bw + 1, bh + 1) / n - mean * mean));
+      // flat, low, clear of runs; crossing a lift or leaving a cut print is disqualifying unless nothing else is free
+      const score = 3 * sd + 0.5 * (mean - zlo) + 60 * runs + (lifts ? 1e6 + lifts : 0) + (out && !offOk ? 1e9 + out : 0);
+      if (!best || score < best.score) best = { score, i0, j0, fs, bw, bh };
+    }
+    return best;
+  };
+  let best = null;
+  if (at) {
+    const fs = at.size / cell, [bw, bh] = dims(fs);
+    best = { fs, bw, bh, i0: Math.max(0, Math.min(nx - 1 - bw, Math.round(at.x / cell - bw / 2))), j0: Math.max(0, Math.min(ny - 1 - bh, Math.round(at.y / cell - bh / 2))) };
+  } else {
+    // a cut print: shrink the letters (down to 3 mm) until a clear spot fits inside the outline;
+    // failing that, place it at full size and let the outline grow around it
+    const sizes = g.inside ? [1, 0.85, 0.72, 0.6].map(f => Math.max(fs0 * f, Math.min(fs0, 3 / cell))) : [fs0];
+    for (const fs of sizes) { const b = search(fs, false); if (b && b.score < 1e6) { best = b; break; } if (!best || (b && b.score < best.score)) best = b; }
+    if (g.inside && best && best.score >= 1e6) { const b = search(fs0, true); if (b && b.score < 1e6) best = b; }
   }
   if (!best) return null;
+  const { fs, bw, bh } = best;
+  if (g.inside) {   // the outline always takes in the name, with 1 mm to spare
+    const pad = Math.ceil(1 / cell);
+    for (let j = Math.max(0, best.j0 - pad); j <= Math.min(ny - 1, best.j0 + bh + pad); j++)
+      for (let i = Math.max(0, best.i0 - pad); i <= Math.min(nx - 1, best.i0 + bw + pad); i++) g.inside[j * nx + i] = 1;
+  }
   const SS = 3, cv = new OffscreenCanvas(bw * SS, bh * SS), x = cv.getContext('2d', { willReadFrequently: true });
   x.font = font(fs * SS); x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle';
   x.translate(bw * SS / 2, bh * SS / 2); x.rotate(rot * Math.PI / 2);
@@ -878,25 +919,33 @@ function setupView(canvas) {
   return v;
 }
 function showPreview(G, o, refit, T) {
-  const M = buildMesh(G);
+  const M = buildMesh(G), N = G.nx * G.ny, NV = M.pos.length / 3;
+  // walls get their own copies of the rim's top corners, so they take the side colour (not a smear of the top's)
+  // and a crisp edge where they meet the top
+  const tri = M.tri.slice(), dup = new Map(), extra = [];
+  for (let f = M.nTop * 3; f < tri.length; f++) {
+    const v = tri[f];
+    if (v < N) { let d = dup.get(v); if (d === undefined) { d = NV + extra.length; extra.push(v); dup.set(v, d); } tri[f] = d; }
+  }
+  const orig = k => k < NV ? k : extra[k - NV], top = k => k < N;   // preview vertex -> mesh vertex; on the top surface?
   const geo = new THREE.BufferGeometry();
   // three.js is y-up: model x -> x, model z (height) -> y, model y (north) -> -z
-  const p = new Float32Array(M.pos.length);
-  for (let i = 0; i < p.length; i += 3) { p[i] = M.pos[i] - G.size[0] / 2; p[i + 1] = M.pos[i + 2]; p[i + 2] = -(M.pos[i + 1] - G.size[1] / 2); }
+  const NP = NV + extra.length, p = new Float32Array(NP * 3);
+  for (let k = 0; k < NP; k++) { const i = 3 * orig(k); p[3 * k] = M.pos[i] - G.size[0] / 2; p[3 * k + 1] = M.pos[i + 2]; p[3 * k + 2] = -(M.pos[i + 1] - G.size[1] / 2); }
   geo.setAttribute('position', new THREE.BufferAttribute(p, 3));
-  geo.setIndex(new THREE.BufferAttribute(M.tri, 1));
+  geo.setIndex(new THREE.BufferAttribute(tri, 1));
   geo.computeVertexNormals();
   let mat;
   if (T) {
-    const { uv, base } = uvOf(G, T), N = G.nx * G.ny, u2 = new Float32Array(N * 4);
-    u2.set(uv); for (let k = N; k < 2 * N; k++) { u2[2 * k] = base[0]; u2[2 * k + 1] = base[1]; }
+    const { uv, base } = uvOf(G, T), u2 = new Float32Array(NP * 2);
+    for (let k = 0; k < NP; k++) { if (top(k)) { u2[2 * k] = uv[2 * k]; u2[2 * k + 1] = uv[2 * k + 1]; } else { u2[2 * k] = base[0]; u2[2 * k + 1] = base[1]; } }
     geo.setAttribute('uv', new THREE.BufferAttribute(u2, 2));
     const tex = new THREE.CanvasTexture(T.canvas); tex.colorSpace = THREE.SRGBColorSpace; tex.flipY = true;
     tex.anisotropy = view.renderer.capabilities.getMaxAnisotropy();
     mat = new THREE.MeshStandardMaterial({ map: tex, roughness: 0.8 });
   } else if (G.pal) {
-    const cols = G.pal.map(c => new THREE.Color(c.hex)), N = G.nx * G.ny, col = new Float32Array(p.length);
-    for (let k = 0; k < N * 2; k++) { const c = k < N ? cols[G.slot[k]] : cols[0]; col.set([c.r, c.g, c.b], 3 * k); }
+    const cols = G.pal.map(c => new THREE.Color(c.hex)), col = new Float32Array(p.length);
+    for (let k = 0; k < NP; k++) { const c = top(k) ? cols[G.slot[k]] : cols[0]; col.set([c.r, c.g, c.b], 3 * k); }
     geo.setAttribute('color', new THREE.BufferAttribute(col, 3));
     mat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 0.7 });
   } else mat = new THREE.MeshStandardMaterial({ color: '#d9d6cf', roughness: 0.6 });
@@ -989,4 +1038,4 @@ export function openPrint({ S, viewer }) {
 }
 
 // exposed for tests
-export const _internals = { buildGrid, buildMesh, toSTL, to3MF, to3MFTextured, toOBJ, bakeTexture, loadOpts, factory };
+export const _internals = { buildGrid, buildMesh, toSTL, to3MF, to3MFTextured, toOBJ, bakeTexture, loadOpts, factory, resolveWidth };
