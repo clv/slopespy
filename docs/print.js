@@ -171,7 +171,7 @@ function buildGrid(src, o, cell) {
     }
   }
 
-  const text = o.label && src.name ? placeLabel({ nx, ny, cell, Z0, Z, lift, run }, src.name, o.width) : null;
+  const text = o.label && src.name ? placeLabel({ nx, ny, cell, Z0, Z, lift, run }, src.name, o.width, o.nameAt) : null;
 
   // colour slot per grid point
   const pal = palette(o.colors, src.conv);
@@ -200,7 +200,7 @@ function buildGrid(src, o, cell) {
 
 // The resort's name, raised 1 mm, in the flattest low-lying spot that no run or lift crosses (usually a valley floor).
 // Smooths away the textures under it so the letters read. Returns the letter mask (0..1 per grid point).
-function placeLabel(g, name, width) {
+function placeLabel(g, name, width, at) {   // at: centre in mm, to reuse a spot found earlier
   const { nx, ny, cell, Z0, Z } = g;
   let fs = Math.max(4, width * 0.045) / cell;                    // letter height in cells
   const font = px => `700 ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
@@ -223,8 +223,8 @@ function placeLabel(g, name, width) {
     return (i0, j0, w, h) => t[(j0 + h) * (nx + 1) + i0 + w] - t[j0 * (nx + 1) + i0 + w] - t[(j0 + h) * (nx + 1) + i0] + t[j0 * (nx + 1) + i0]; };
   const sLift = sat(k => liftD[k]), sRun = sat(k => g.run[k] > 0.3 ? 1 : 0), sZ = sat(k => Z0[k]), sZ2 = sat(k => Z0[k] * Z0[k]);
   const step = Math.max(1, Math.round(fs / 4)), n = (bw + 1) * (bh + 1);
-  let best = null;
-  for (let j0 = margin; j0 + bh < ny - margin; j0 += step) for (let i0 = margin; i0 + bw < nx - margin; i0 += step) {
+  let best = at ? { i0: Math.max(0, Math.min(nx - 1 - bw, Math.round(at.x / cell - bw / 2))), j0: Math.max(0, Math.min(ny - 1 - bh, Math.round(at.y / cell - bh / 2))) } : null;
+  if (!at) for (let j0 = margin; j0 + bh < ny - margin; j0 += step) for (let i0 = margin; i0 + bw < nx - margin; i0 += step) {
     const lifts = sLift(i0, j0, bw + 1, bh + 1), runs = sRun(i0, j0, bw + 1, bh + 1) / n;
     const mean = sZ(i0, j0, bw + 1, bh + 1) / n, sd = Math.sqrt(Math.max(0, sZ2(i0, j0, bw + 1, bh + 1) / n - mean * mean));
     // flat, low, clear of runs; any lift is disqualifying unless nothing else is free
@@ -596,6 +596,7 @@ function ensureDialog() {
     <div class="sheet-head"><h2 id="printTitle">3D print</h2><button class="btn icon" data-close aria-label="Close">✕</button></div>
     <div class="print-body">
       <div class="print-preview"><canvas></canvas><div class="print-busy" hidden>Building…</div></div>
+      <div class="print-side">
       <p class="print-info"></p>
       <form class="print-form">
         ${row('Format', seg('format', [['stl', 'STL'], ['3mf', '3MF'], ['obj', 'OBJ']]))}
@@ -613,8 +614,9 @@ function ensureDialog() {
         </div></div>
       </form>
       <div class="print-legend"></div>
+      <div class="print-actions"><p class="print-note"></p><div class="print-btns"><button class="btn" data-reset>Reset</button><button class="btn primary" data-go>Download</button></div></div>
+      </div>
     </div>
-    <div class="print-foot"><button class="btn" data-reset>Reset</button><span class="print-note muted"></span><button class="btn primary" data-go>Download</button></div>
   </div>`;
   document.body.appendChild(dlg);
   const close = () => { dlg.hidden = true; };
@@ -755,7 +757,9 @@ export function openPrint({ S, viewer }) {
     await new Promise(res => setTimeout(res, 30));
     try {
       o = resolveWidth(src, effective(readForm(form)));
-      const G = buildGrid(src, o, Math.max(0.25, o.width / MAX_CELLS));
+      // the name's spot is searched for on the preview's grid, so the file matches what the preview showed
+      const nb = o.label ? buildGrid(src, { ...o, colors: 'mono' }, Math.max(0.25, o.width / PREVIEW_CELLS)).nameBox : null;
+      const G = buildGrid(src, { ...o, nameAt: nb }, Math.max(0.25, o.width / MAX_CELLS));
       const M = buildMesh(G);
       const name = `${r.name} · Slope Spy`;
       const file = `slopespy-${r.id}-${o.size === 'width' ? `${o.width}mm` : `1to${o.size / 1000}k`}${o.colors === 'mono' ? '' : o.colors === 'full' ? '-fullcolor' : `-${o.colors}color`}`;
