@@ -290,16 +290,16 @@ header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
 .prow.sub { margin-top: -4px; }
 .prow .pctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
 .plab { color: var(--muted); font-size: 12px; }
-.seg { display: flex; width: 100%; padding: 2px; gap: 2px; border-radius: 8px; background: var(--input); border: 1px solid var(--line); }
-.seg label { flex: 1 1 0; min-width: 0; position: relative; cursor: pointer; }
-.seg input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: inherit; }
-.seg span { display: block; padding: 5px 4px; border-radius: 6px; text-align: center; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); transition: background .12s, color .12s; }
-.seg label:hover span { color: var(--fg); }
-.seg input:checked + span { background: var(--accent); color: #06121f; font-weight: 600; }
-.seg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
-.seg input:disabled + span { opacity: .35; }
-.seg input:disabled { cursor: not-allowed; }
-.seg input:disabled:checked + span { background: var(--line); color: var(--fg); opacity: .8; }
+.pseg { display: flex; width: 100%; padding: 2px; gap: 2px; border-radius: 8px; background: var(--input); border: 1px solid var(--line); }
+.pseg label { flex: 1 1 0; min-width: 0; position: relative; cursor: pointer; }
+.pseg input { position: absolute; inset: 0; opacity: 0; margin: 0; cursor: inherit; }
+.pseg span { display: block; padding: 5px 4px; border-radius: 6px; text-align: center; font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; color: var(--muted); transition: background .12s, color .12s; }
+.pseg label:hover span { color: var(--fg); }
+.pseg input:checked + span { background: var(--accent); color: #06121f; font-weight: 600; }
+.pseg input:focus-visible + span { outline: 2px solid var(--accent); outline-offset: 1px; }
+.pseg input:disabled + span { opacity: .35; }
+.pseg input:disabled { cursor: not-allowed; }
+.pseg input:disabled:checked + span { background: var(--line); color: var(--fg); opacity: .8; }
 .print-form select { background: var(--input); color: var(--fg); border: 1px solid var(--line); border-radius: 7px; padding: 5px 8px; font: inherit; font-size: 13px; }
 .print-form select[hidden], .print-form .hint[hidden] { display: none; }
 .print-form .hint { color: var(--muted); font-size: 12px; }

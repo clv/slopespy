@@ -586,7 +586,7 @@ const PREVIEW_TEX = SMALL ? 1024 : 2048;   // full-colour texture, long side
 const fullTex = width => Math.min(SMALL ? 4096 : 8192, Math.ceil(width * 25));   // ~25 px/mm, a little past PolyJet's ~600 dpi
 
 const row = (label, ctl, cls = '') => `<div class="prow ${cls}"><span class="plab">${label}</span><div class="pctl">${ctl}</div></div>`;
-const seg = (name, opts) => `<div class="seg" role="radiogroup">${opts.map(([v, t]) => `<label><input type="radio" name="${name}" value="${v}"><span>${t}</span></label>`).join('')}</div>`;
+const seg = (name, opts) => `<div class="pseg" role="radiogroup">${opts.map(([v, t]) => `<label><input type="radio" name="${name}" value="${v}"><span>${t}</span></label>`).join('')}</div>`;
 function ensureDialog() {
   if (dlg) return dlg;
   dlg = document.createElement('div');
