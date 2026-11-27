@@ -13,7 +13,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 // ---------- settings (remembered per browser) ----------
 const KEY = 'sc.print';
-const factory = viewer => ({ format: 'stl', colors: 'mono', relief: true, label: true, width: 150, size: 'width', scale: 50000, exag: viewer.exag, area: 'model', base: 4 });
+const factory = viewer => ({ format: 'stl', colors: 'mono', relief: true, label: true, width: 150, size: 'width', scale: 50000, exag: viewer.exag, area: 'model', margin: 20, shape: 'rect', specs: true, base: 4 });
 function loadOpts(viewer) {
   let o = {};
   try { o = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch {}
@@ -39,16 +39,37 @@ const RUN_LEVEL = { novice: 0, easy: 0, intermediate: 1, advanced: 2, expert: 2,
 function regionOf(src, o) {
   const { data, terrain } = src, z = terrain.z, crop = terrain.crop;
   let [px0, py0, px1, py1] = crop;
-  if (o.area === 'ski') {   // runs and lifts plus a 20% margin
+  if (o.area === 'ski') {   // runs, lifts and the boundary plus a margin (a share of the larger side)
     let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
     const visit = c => { if (typeof c[0] === 'number') { const x = lon2px(c[0], z), y = lat2px(c[1], z); x0 = Math.min(x0, x); x1 = Math.max(x1, x); y0 = Math.min(y0, y); y1 = Math.max(y1, y); } else c.forEach(visit); };
     for (const f of data.runs.concat(data.lifts)) visit(f.c);
+    if (data.boundary) visit(data.boundary.c);
     if (isFinite(x0)) {
-      const mx = (x1 - x0) * 0.2 + 30, my = (y1 - y0) * 0.2 + 30;
+      const m = Math.max(x1 - x0, y1 - y0) * (o.margin ?? 20) / 100, mx = m, my = m;
       px0 = Math.max(crop[0], x0 - mx); py0 = Math.max(crop[1], y0 - my); px1 = Math.min(crop[2], x1 + mx); py1 = Math.min(crop[3], y1 + my);
     }
   }
   return { px0, py0, px1, py1 };
+}
+// Which way is "up the mountain": lifts run from the base to the top, so their low-to-high directions,
+// summed, point the way someone standing at the base looks. Returned as quarter turns from north-up
+// (0 north, 1 east, 2 south, 3 west), or 0 when the lifts disagree too much to say.
+function uphillTurns(src) {
+  const { data, terrain } = src, z = terrain.z;
+  let vx = 0, vy = 0, tot = 0;
+  for (const f of data.lifts) {
+    const line = f.t === 'MultiLineString' ? f.c.flat() : f.c;
+    if (!line || line.length < 2) continue;
+    const a = line[0], b = line[line.length - 1];
+    const ax = lon2px(a[0], z), ay = lat2px(a[1], z), bx = lon2px(b[0], z), by = lat2px(b[1], z);
+    const ha = terrain.sampleGP(ax, ay), hb = terrain.sampleGP(bx, by), len = Math.hypot(bx - ax, by - ay);
+    if (!len || Math.abs(hb - ha) < 20) continue;
+    const s = hb > ha ? 1 : -1;
+    vx += s * (bx - ax); vy += s * (by - ay); tot += len;
+  }
+  if (!tot || Math.hypot(vx, vy) < 0.2 * tot) return 0;
+  const ang = Math.atan2(vx, -vy);                      // 0 = north, clockwise
+  return ((Math.round(ang / (Math.PI / 2)) % 4) + 4) % 4;
 }
 // Fixed scales (1:n) make prints of different resorts comparable; the width then follows from the area
 const SCALES = [25000, 50000, 75000, 100000, 150000];
@@ -171,7 +192,17 @@ function buildGrid(src, o, cell) {
     }
   }
 
-  const text = o.label && src.name ? placeLabel({ nx, ny, cell, Z0, Z, lift, run }, src.name, o.width, o.nameAt) : null;
+  // cut to the ski area: everything within the margin of a run, lift or the boundary, holes filled, one piece
+  let inside = null;
+  if (o.shape === 'cut' && o.area === 'ski') {
+    const ski = raster(g => {
+      g.lineWidth = lw(1.1); g.beginPath(); rings(data.runs, (f, r) => path(g, r)); rings(data.lifts, (f, r) => path(g, r)); g.stroke();
+      if (data.boundary) { g.beginPath(); rings([data.boundary], (f, r) => { path(g, r); g.closePath(); }); g.fill('evenodd'); }
+    });
+    inside = shapeMask(ski, nx, ny, Math.max(2, (o.margin ?? 20) / 100 * Math.max(nx - 1, ny - 1) * cell) / cell);
+  }
+  const rot = uphillTurns(src);
+  const text = o.label && src.name ? placeLabel({ nx, ny, cell, Z0, Z, lift, run, inside }, src.name, o.width, o.nameAt, rot) : null;
 
   // colour slot per grid point
   const pal = palette(o.colors, src.conv);
@@ -194,21 +225,78 @@ function buildGrid(src, o, cell) {
     }
   }
   let zmax = 0; for (let k = 0; k < N; k++) if (Z[k] > zmax) zmax = Z[k];
-  return { nx, ny, cell, Z, slot, pal, size: [(nx - 1) * cell, (ny - 1) * cell, zmax], scale: 1000 / mmPerM,
-    region: { z, px0, py0, px1, py1, mmPerPx }, nameBox: text?.box || null };
+  const G = { nx, ny, cell, Z, slot, pal, size: [(nx - 1) * cell, (ny - 1) * cell, zmax], scale: 1000 / mmPerM, rot,
+    region: { z, px0, py0, px1, py1, mmPerPx }, nameBox: text?.box || null, elev: [hmin, hmax], inside };
+  if (o.specs !== false) G.under = engraveSpecs(G, src, o);
+  return G;
+}
+
+// The print's details, engraved 0.6 mm into the underside, mirrored so they read with the print turned over
+const ENGRAVE = 0.6;
+function specLines(G, src, o) {
+  const r = src.meta || {}, fmt = v => Math.round(v).toLocaleString('en-US');
+  const { px0, py0, px1, py1, z } = G.region;
+  const lat = px2lat((py0 + py1) / 2, z), lon = ((px0 + px1) / 2) / worldPx(z) * 360 - 180;
+  const ll = `${Math.abs(lat).toFixed(3)}° ${lat < 0 ? 'S' : 'N'}  ${Math.abs(lon).toFixed(3)}° ${lon < 0 ? 'W' : 'E'}`;
+  const where = [r.region, r.countryName].filter(Boolean).join(', ');
+  return [
+    src.name || '',
+    [where, ll].filter(Boolean).join('  ·  '),
+    `1:${fmt(Math.round(G.scale / 100) * 100)}  ·  vertical ${o.exag}×  ·  ${fmt(G.size[0])} × ${fmt(G.size[1])} × ${fmt(G.size[2])} mm`,
+    `${fmt(G.elev[0])}–${fmt(G.elev[1])} m  ·  base ${o.base} mm  ·  N ↑`,
+    `slopespy.com  ·  ${new Date().toISOString().slice(0, 10)}`,
+  ];
+}
+function engraveSpecs(G, src, o) {
+  const { nx, ny, cell } = G;
+  if (o.base < 1.5) return null;
+  const lines = specLines(G, src, o);
+  const font = (wt, px) => `${wt} ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
+  const m = new OffscreenCanvas(8, 8).getContext('2d');
+  const widthAt = fs => Math.max(...lines.map((t, i) => { m.font = font(i ? 600 : 750, (i ? 1 : 1.35) * fs); return m.measureText(t).width; }));
+  let fs = Math.min(3.2, Math.max(2.2, G.size[0] * 0.02));                        // letter height, mm
+  fs = Math.min(fs, G.size[0] * 0.86 / (widthAt(100) / 100));
+  const lh = fs * 1.45, hmm = lh * (lines.length + 0.35) + fs * 0.6;
+  if (fs < 1.8 || hmm > G.size[1] * 0.9) return null;                             // too small to print legibly
+  const bw = Math.ceil((widthAt(fs) + 2 * fs) / cell), bh = Math.ceil(hmm / cell);
+  let bi0 = Math.round((nx - 1 - bw) / 2), bj0 = Math.round((ny - 1 - bh) / 2);
+  if (G.inside) {   // a cut print: centre the panel on the shape, and it has to fit inside it
+    let sx = 0, sy = 0, n = 0;
+    for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (G.inside[j * nx + i]) { sx += i; sy += j; n++; }
+    bi0 = Math.round(sx / n - bw / 2); bj0 = Math.round(sy / n - bh / 2);
+    if (bi0 < 2 || bj0 < 2 || bi0 + bw > nx - 3 || bj0 + bh > ny - 3) return null;
+    for (let j = bj0 - 1; j <= bj0 + bh + 1; j++) for (let i = bi0 - 1; i <= bi0 + bw + 1; i++) if (!G.inside[j * nx + i]) return null;
+  }
+  if (bi0 < 2 || bj0 < 2) return null;
+  const SS = 3, cv = new OffscreenCanvas(bw * SS, bh * SS), x = cv.getContext('2d', { willReadFrequently: true });
+  const k = SS / cell;
+  x.translate(bw * SS, 0); x.scale(-1, 1);                                        // mirrored: read from below
+  x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  lines.forEach((t, i) => {
+    x.font = font(i ? 600 : 750, (i ? 1 : 1.35) * fs * k);
+    x.fillText(t, bw * SS / 2, (fs * 0.5 + lh * (i + 0.5) + (i ? lh * 0.35 : 0)) * k);
+  });
+  const px = x.getImageData(0, 0, bw * SS, bh * SS).data, depth = new Float32Array((bw + 1) * (bh + 1));
+  for (let j = 0; j < bh; j++) for (let i = 0; i < bw; i++) {
+    let a = 0;
+    for (let b = 0; b < SS; b++) for (let c = 0; c < SS; c++) a += px[4 * ((j * SS + b) * bw * SS + i * SS + c) + 3];
+    depth[j * (bw + 1) + i] = ENGRAVE * a / (255 * SS * SS);
+  }
+  return { i0: bi0, j0: bj0, w: bw, h: bh, depth, lines };
 }
 
 // The resort's name, raised 1 mm, in the flattest low-lying spot that no run or lift crosses (usually a valley floor).
 // Smooths away the textures under it so the letters read. Returns the letter mask (0..1 per grid point).
-function placeLabel(g, name, width, at) {   // at: centre in mm, to reuse a spot found earlier
+function placeLabel(g, name, width, at, rot = 0) {   // at: centre in mm, to reuse a spot found earlier; rot: quarter turns
   const { nx, ny, cell, Z0, Z } = g;
   let fs = Math.max(4, width * 0.045) / cell;                    // letter height in cells
   const font = px => `700 ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   const meas = new OffscreenCanvas(8, 8).getContext('2d');
   meas.font = font(100);
   const per100 = meas.measureText(name).width / 100;
-  fs = Math.min(fs, nx * 0.8 / Math.max(1, per100));               // long names get smaller letters
-  const bw = Math.ceil(per100 * fs + fs * 0.8), bh = Math.ceil(fs * 1.6);
+  fs = Math.min(fs, (rot % 2 ? ny : nx) * 0.8 / Math.max(1, per100));   // long names get smaller letters
+  const tw = Math.ceil(per100 * fs + fs * 0.8), th = Math.ceil(fs * 1.6);   // the text's own width and height
+  const bw = rot % 2 ? th : tw, bh = rot % 2 ? tw : th;                      // its footprint on the grid
   const margin = Math.ceil(2 / cell);
   if (bw + 2 * margin >= nx || bh + 2 * margin >= ny) return null;
   let zlo = Infinity, zhi = -Infinity;
@@ -221,6 +309,7 @@ function placeLabel(g, name, width, at) {   // at: centre in mm, to reuse a spot
   const sat = f => { const t = new Float64Array((nx + 1) * (ny + 1));
     for (let j = 0; j < ny; j++) { let row = 0; for (let i = 0; i < nx; i++) { row += f(j * nx + i); t[(j + 1) * (nx + 1) + i + 1] = t[j * (nx + 1) + i + 1] + row; } }
     return (i0, j0, w, h) => t[(j0 + h) * (nx + 1) + i0 + w] - t[j0 * (nx + 1) + i0 + w] - t[(j0 + h) * (nx + 1) + i0] + t[j0 * (nx + 1) + i0]; };
+  if (g.inside) for (let k = 0; k < liftD.length; k++) if (!g.inside[k]) liftD[k] = 1;   // stay on the print
   const sLift = sat(k => liftD[k]), sRun = sat(k => g.run[k] > 0.3 ? 1 : 0), sZ = sat(k => Z0[k]), sZ2 = sat(k => Z0[k] * Z0[k]);
   const step = Math.max(1, Math.round(fs / 4)), n = (bw + 1) * (bh + 1);
   let best = at ? { i0: Math.max(0, Math.min(nx - 1 - bw, Math.round(at.x / cell - bw / 2))), j0: Math.max(0, Math.min(ny - 1 - bh, Math.round(at.y / cell - bh / 2))) } : null;
@@ -234,7 +323,8 @@ function placeLabel(g, name, width, at) {   // at: centre in mm, to reuse a spot
   if (!best) return null;
   const SS = 3, cv = new OffscreenCanvas(bw * SS, bh * SS), x = cv.getContext('2d', { willReadFrequently: true });
   x.font = font(fs * SS); x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle';
-  x.fillText(name, bw * SS / 2, bh * SS / 2 + fs * SS * 0.05);
+  x.translate(bw * SS / 2, bh * SS / 2); x.rotate(rot * Math.PI / 2);
+  x.fillText(name, 0, fs * SS * 0.05);
   const px = x.getImageData(0, 0, bw * SS, bh * SS).data, mask = new Float32Array(Z.length);
   for (let j = 0; j < bh; j++) for (let i = 0; i < bw; i++) {
     let a = 0;
@@ -245,12 +335,100 @@ function placeLabel(g, name, width, at) {   // at: centre in mm, to reuse a spot
     // no textures around the letters; the letters follow the ground 1 mm proud of it
     Z[k] = Z0[k] + 1.0 * a;
   }
-  mask.box = { x: (best.i0 + bw / 2) * cell, y: (best.j0 + bh / 2) * cell, size: fs * cell, w: bw * cell, h: bh * cell };
+  mask.box = { x: (best.i0 + bw / 2) * cell, y: (best.j0 + bh / 2) * cell, size: fs * cell, w: bw * cell, h: bh * cell, rot };
   return mask;
+}
+
+// Grid points within r cells of the ski area (chamfer distance), with enclosed holes filled, largest piece only
+function shapeMask(ski, nx, ny, r) {
+  const N = nx * ny, d = new Float32Array(N), D = Math.SQRT2;
+  for (let k = 0; k < N; k++) d[k] = ski[k] > 0.3 ? 0 : 1e9;
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const k = j * nx + i; let v = d[k];
+    if (i > 0) v = Math.min(v, d[k - 1] + 1);
+    if (j > 0) { v = Math.min(v, d[k - nx] + 1); if (i > 0) v = Math.min(v, d[k - nx - 1] + D); if (i < nx - 1) v = Math.min(v, d[k - nx + 1] + D); }
+    d[k] = v;
+  }
+  for (let j = ny - 1; j >= 0; j--) for (let i = nx - 1; i >= 0; i--) {
+    const k = j * nx + i; let v = d[k];
+    if (i < nx - 1) v = Math.min(v, d[k + 1] + 1);
+    if (j < ny - 1) { v = Math.min(v, d[k + nx] + 1); if (i < nx - 1) v = Math.min(v, d[k + nx + 1] + D); if (i > 0) v = Math.min(v, d[k + nx - 1] + D); }
+    d[k] = v;
+  }
+  const inside = new Uint8Array(N);
+  for (let k = 0; k < N; k++) inside[k] = d[k] <= r ? 1 : 0;
+  const flood = (seeds, ok, mark) => {
+    const st = seeds.slice(), got = []; for (const k of st) mark[k] = 1;
+    while (st.length) {
+      const k = st.pop(); got.push(k);
+      const i = k % nx, j = (k - i) / nx;
+      for (const q of [i > 0 ? k - 1 : -1, i < nx - 1 ? k + 1 : -1, j > 0 ? k - nx : -1, j < ny - 1 ? k + nx : -1]) if (q >= 0 && !mark[q] && ok(q)) { mark[q] = 1; st.push(q); }
+    }
+    return got;
+  };
+  // holes: anything outside that the outer edge can't reach
+  const out = new Uint8Array(N), edge = [];
+  for (let i = 0; i < nx; i++) edge.push(i, (ny - 1) * nx + i);
+  for (let j = 0; j < ny; j++) edge.push(j * nx, j * nx + nx - 1);
+  flood(edge.filter(k => !inside[k]), q => !inside[q], out);
+  for (let k = 0; k < N; k++) if (!out[k]) inside[k] = 1;
+  // keep the biggest piece
+  const seen = new Uint8Array(N); let best = [];
+  for (let k = 0; k < N; k++) if (inside[k] && !seen[k]) { const got = flood([k], q => inside[q], seen); if (got.length > best.length) best = got; }
+  inside.fill(0); for (const k of best) inside[k] = 1;
+  return inside;
+}
+
+// Watertight mesh for a cut print: top and bottom triangles wherever all three corners are inside the shape,
+// walls along every edge only one top triangle uses. Diagonal halves of cells keep the outline from stair-stepping.
+function buildMeshCut(G) {
+  const { nx, ny, cell, Z, inside: In } = G, N = nx * ny, U = G.under;
+  const pos = new Float32Array(N * 2 * 3);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
+    const k = j * nx + i, x = i * cell, y = (ny - 1 - j) * cell;
+    pos.set([x, y, Z[k]], 3 * k); pos.set([x, y, 0], 3 * (N + k));
+  }
+  for (let j = 0; U && j <= U.h; j++) for (let i = 0; i <= U.w; i++) pos[3 * (N + (U.j0 + j) * nx + U.i0 + i) + 2] = U.depth[j * (U.w + 1) + i];
+  const top = [];
+  for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
+    const a = j * nx + i, b = a + 1, c = a + nx, d = c + 1;
+    // split along the diagonal that keeps the most of a partly-inside cell
+    if (In[a] && In[b] && In[c] && In[d]) top.push(a, c, b, b, c, d);
+    else if (In[a] && In[c] && In[b]) top.push(a, c, b);
+    else if (In[b] && In[c] && In[d]) top.push(b, c, d);
+    else if (In[a] && In[c] && In[d]) top.push(a, c, d);
+    else if (In[a] && In[d] && In[b]) top.push(a, d, b);
+  }
+  const nTop = top.length / 3;
+  // boundary edges: directed edges whose reverse no top triangle uses
+  const key = (u, v) => u * N + v, edges = new Set();
+  for (let f = 0; f < top.length; f += 3) for (let e = 0; e < 3; e++) edges.add(key(top[f + e], top[f + (e + 1) % 3]));
+  const rim = [];
+  for (let f = 0; f < top.length; f += 3) for (let e = 0; e < 3; e++) {
+    const u = top[f + e], v = top[f + (e + 1) % 3];
+    if (!edges.has(key(v, u))) rim.push(u, v);
+  }
+  const tri = new Uint32Array((nTop * 2 + rim.length) * 3);
+  tri.set(top);
+  let t = top.length;
+  for (let r = 0; r < rim.length; r += 2) { const u = rim[r], v = rim[r + 1]; tri[t++] = v; tri[t++] = u; tri[t++] = u + N; tri[t++] = v; tri[t++] = u + N; tri[t++] = v + N; }
+  for (let f = 0; f < top.length; f += 3) { tri[t++] = top[f] + N; tri[t++] = top[f + 2] + N; tri[t++] = top[f + 1] + N; }
+  return { pos, tri, nTop };
+}
+
+function flipIfInside(M) {   // turn every face if the signed volume came out negative
+  const { pos, tri } = M; let vol = 0;
+  for (let f = 0; f < tri.length; f += 3) {
+    const a = 3 * tri[f], b = 3 * tri[f + 1], c = 3 * tri[f + 2];
+    vol += pos[a] * (pos[b + 1] * pos[c + 2] - pos[b + 2] * pos[c + 1]) - pos[a + 1] * (pos[b] * pos[c + 2] - pos[b + 2] * pos[c]) + pos[a + 2] * (pos[b] * pos[c + 1] - pos[b + 1] * pos[c]);
+  }
+  if (vol < 0) for (let f = 0; f < tri.length; f += 3) { const x = tri[f + 1]; tri[f + 1] = tri[f + 2]; tri[f + 2] = x; }
+  return M;
 }
 
 // Watertight mesh: top surface, four walls down to z=0, a flat bottom; outward-facing triangles.
 function buildMesh(G) {
+  if (G.inside) return flipIfInside(buildMeshCut(G));
   const { nx, ny, cell, Z } = G, N = nx * ny;
   const pos = new Float32Array(N * 2 * 3);
   for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) {
@@ -265,7 +443,9 @@ function buildMesh(G) {
   for (let j = ny - 2; j > 0; j--) loop.push(j * nx);
   loop.push(0);
   loop.reverse();   // run the rim the opposite way to the top surface's own boundary edges
-  const nWall = (loop.length - 1) * 2, nBot = loop.length - 3;
+  const U = G.under;
+  for (let j = 0; U && j <= U.h; j++) for (let i = 0; i <= U.w; i++) pos[3 * (N + (U.j0 + j) * nx + U.i0 + i) + 2] = U.depth[j * (U.w + 1) + i];
+  const nWall = (loop.length - 1) * 2, nBot = U ? 2 * U.w * U.h + 2 * (nx - 1 + ny - 1 + U.w + U.h) : loop.length - 3;
   const tri = new Uint32Array((nTop + nWall + nBot) * 3);
   let t = 0;
   for (let j = 0; j < ny - 1; j++) for (let i = 0; i < nx - 1; i++) {
@@ -276,7 +456,29 @@ function buildMesh(G) {
     const p = loop[k], q = loop[k + 1];
     tri[t++] = q; tri[t++] = p; tri[t++] = p + N; tri[t++] = q; tri[t++] = p + N; tri[t++] = q + N;
   }
-  for (let k = 1; k < loop.length - 2; k++) { tri[t++] = loop[0] + N; tri[t++] = loop[k + 1] + N; tri[t++] = loop[k] + N; }
+  const bot0 = t;
+  if (!U) for (let k = 1; k < loop.length - 2; k++) { tri[t++] = loop[0] + N; tri[t++] = loop[k + 1] + N; tri[t++] = loop[k] + N; }
+  else {
+    // engraved panel as a grid, joined to the rim by four trapezoids
+    for (let j = 0; j < U.h; j++) for (let i = 0; i < U.w; i++) {
+      const a = N + (U.j0 + j) * nx + U.i0 + i, b = a + 1, c = a + nx, d = c + 1;
+      tri[t++] = a; tri[t++] = b; tri[t++] = c; tri[t++] = b; tri[t++] = d; tri[t++] = c;
+    }
+    const zip = (A, B) => {
+      let i = 0, j = 0;
+      while (i < A.length - 1 || j < B.length - 1) {
+        if (j === B.length - 1 || (i < A.length - 1 && (i + 1) / (A.length - 1) <= (j + 1) / (B.length - 1))) { tri[t++] = A[i]; tri[t++] = A[i + 1]; tri[t++] = B[j]; i++; }
+        else { tri[t++] = A[i]; tri[t++] = B[j + 1]; tri[t++] = B[j]; j++; }
+      }
+    };
+    const row = (j, i0, i1) => Array.from({ length: i1 - i0 + 1 }, (_, n) => N + j * nx + i0 + n);
+    const col = (i, j0, j1) => Array.from({ length: j1 - j0 + 1 }, (_, n) => N + (j0 + n) * nx + i);
+    const I1 = U.i0 + U.w, J1 = U.j0 + U.h;
+    zip(row(0, 0, nx - 1), row(U.j0, U.i0, I1));
+    zip(row(ny - 1, 0, nx - 1), row(J1, U.i0, I1));
+    zip(col(0, 0, ny - 1), col(U.i0, U.j0, J1));
+    zip(col(nx - 1, 0, ny - 1), col(I1, U.j0, J1));
+  }
   // flip everything if the volume came out negative (mirror from the north-up flip)
   let vol = 0;
   for (let f = 0; f < tri.length; f += 3) {
@@ -284,6 +486,11 @@ function buildMesh(G) {
     vol += pos[a] * (pos[b + 1] * pos[c + 2] - pos[b + 2] * pos[c + 1]) - pos[a + 1] * (pos[b] * pos[c + 2] - pos[b + 2] * pos[c]) + pos[a + 2] * (pos[b] * pos[c + 1] - pos[b + 1] * pos[c]);
   }
   if (vol < 0) for (let f = 0; f < tri.length; f += 3) { const x = tri[f + 1]; tri[f + 1] = tri[f + 2]; tri[f + 2] = x; }
+  // the underside always faces down (judged from the triangles' footprint, which stays well-shaped where letters dip)
+  for (let f = bot0; U && f < tri.length; f += 3) {
+    const a = 3 * tri[f], b = 3 * tri[f + 1], c = 3 * tri[f + 2];
+    if ((pos[b] - pos[a]) * (pos[c + 1] - pos[a + 1]) - (pos[b + 1] - pos[a + 1]) * (pos[c] - pos[a]) > 0) { const x = tri[f + 1]; tri[f + 1] = tri[f + 2]; tri[f + 2] = x; }
+  }
   return { pos, tri, nTop };
 }
 
@@ -515,7 +722,8 @@ async function bakeTexture(src, G, maxPx) {
     const b = G.nameBox;
     g.font = font(700, b.size * W / G.size[0]);
     g.fillStyle = '#15181c';
-    g.fillText(src.name, b.x * W / G.size[0], b.y * H / G.size[1] + b.size * H / G.size[1] * 0.05);
+    g.save(); g.translate(b.x * W / G.size[0], b.y * H / G.size[1]); g.rotate((b.rot || 0) * Math.PI / 2);
+    g.fillText(src.name, 0, b.size * H / G.size[1] * 0.05); g.restore();
   }
   return { canvas: cv, W, H };
 }
@@ -607,10 +815,13 @@ function ensureDialog() {
           <small class="hint size-hint">Same scale, comparable prints</small>`, 'sub')}
         ${row('Vertical', seg('exag', [1, 1.5, 2, 3].map(v => [v, `${v}×`])))}
         ${row('Base', seg('base', [2, 4, 6, 10].map(v => [v, `${v} mm`])))}
-        ${row('Area', seg('area', [['model', 'Whole model'], ['ski', 'Ski area']]))}
+        ${row('Area', seg('area', [['ski', 'Ski area'], ['model', 'Whole model']]))}
+        ${row('Shape', seg('shape', [['rect', 'Rectangle'], ['cut', 'Cut to ski area']]), 'margin-row')}
+        ${row('Margin', seg('margin', [[0, 'None'], [5, '5%'], [10, '10%'], [20, '20%']]), 'margin-row')}
         <div class="prow opts"><span class="plab">Details</span><div class="pctl">
           <label class="opt"><input type="checkbox" name="relief"><span>Relief textures<small>Forest bumps, engraved runs, raised lifts, buildings and boundary</small></span></label>
-          <label class="opt"><input type="checkbox" name="label"><span>Resort name<small>Raised 1 mm in a low, open spot</small></span></label>
+          <label class="opt"><input type="checkbox" name="label"><span>Resort name<small>Raised 1 mm in a low, open spot, reading from the base up the mountain</small></span></label>
+          <label class="opt"><input type="checkbox" name="specs"><span>Specs underneath<small>Place, scale, size and date engraved into the bottom</small></span></label>
         </div></div>
       </form>
       <div class="print-legend"></div>
@@ -629,7 +840,7 @@ function readForm(form) {
   const pick = n => form.querySelector(`[name="${n}"]:checked`)?.value;   // (disabled radios still count)
   const format = pick('format');
   const colors = format === '3mf' && form.dataset.format === '3mf' ? pick('colors') || 'mono' : form.dataset.colors || 'mono';
-  return { format, colors, relief: form.relief.checked, label: form.label.checked, width: +form.width.value, scale: +form.scale.value,
+  return { format, colors, relief: form.relief.checked, label: form.label.checked, specs: form.specs.checked, margin: +pick('margin'), shape: pick('shape') || 'rect', width: +form.width.value, scale: +form.scale.value,
     size: pick('sizeMode') === 'scale' ? form.scale.value : 'width', exag: +pick('exag'), base: +pick('base'), area: pick('area') };
 }
 // STL carries no colour, so it always prints single-colour (the colour choice is kept for when 3MF is picked again)
@@ -638,8 +849,9 @@ const effective = o => o.format === 'stl' ? { ...o, colors: 'mono' } : o.format 
 function writeForm(form, o) {
   form.dataset.colors = o.colors;   // the 3MF colour choice, kept while STL or OBJ force their own
   form.dataset.format = o.format;
-  for (const k of ['format', 'colors', 'area', 'exag', 'base']) { const el = form.querySelector(`[name="${k}"][value="${o[k]}"]`); if (el) el.checked = true; }
-  form.relief.checked = o.relief; form.label.checked = o.label;
+  for (const k of ['format', 'colors', 'area', 'shape', 'margin', 'exag', 'base']) { const el = form.querySelector(`[name="${k}"][value="${o[k]}"]`); if (el) el.checked = true; }
+  form.relief.checked = o.relief; form.label.checked = o.label; form.specs.checked = o.specs !== false;
+  for (const el of form.querySelectorAll('.margin-row')) el.hidden = o.area !== 'ski';
   const byScale = o.size !== 'width';
   form.querySelector(`[name="sizeMode"][value="${byScale ? 'scale' : 'width'}"]`).checked = true;
   form.width.hidden = byScale; form.scale.hidden = !byScale; form.querySelector('.size-hint').hidden = !byScale;
@@ -700,7 +912,7 @@ function showPreview(G, o, refit, T) {
   view.r = r;
   if (refit) {
     view.controls.target.set(0, G.size[2] * 0.35, 0);
-    view.camera.position.set(-r * 0.15, r * 0.85, r * 1.25);
+    view.camera.position.set(-r * 0.15, r * 0.85, r * 1.25).applyAxisAngle(new THREE.Vector3(0, 1, 0), -(G.rot || 0) * Math.PI / 2);   // from the base, looking up
     view.camera.near = r / 100; view.camera.far = r * 20; view.camera.updateProjectionMatrix();
   }
 }
@@ -709,7 +921,7 @@ export function openPrint({ S, viewer }) {
   ensureDialog();
   const form = dlg.querySelector('form'), canvas = dlg.querySelector('canvas'), info = dlg.querySelector('.print-info');
   const legend = dlg.querySelector('.print-legend'), busy = dlg.querySelector('.print-busy'), note = dlg.querySelector('.print-note');
-  const r = S.resort, src = { ...S.src, name: r.name };
+  const r = S.resort, src = { ...S.src, name: r.name, meta: r };
   dlg.querySelector('#printTitle').textContent = `3D print: ${r.name}`;
   let o = loadOpts(viewer);
   writeForm(form, o);
@@ -726,7 +938,7 @@ export function openPrint({ S, viewer }) {
   const update = (refit = false) => {
     o = readForm(form); writeForm(form, o); saveOpts(o);
     o = resolveWidth(src, o);
-    const key = JSON.stringify([r.id, effective(o).colors, o.relief, o.label, o.width, o.exag, o.base, o.area]);
+    const key = JSON.stringify([r.id, effective(o).colors, o.relief, o.label, o.specs, o.margin, o.shape, o.width, o.exag, o.base, o.area]);
     if (key === lastKey && !refit) return;
     lastKey = key;
     busy.hidden = false;
@@ -758,7 +970,7 @@ export function openPrint({ S, viewer }) {
     try {
       o = resolveWidth(src, effective(readForm(form)));
       // the name's spot is searched for on the preview's grid, so the file matches what the preview showed
-      const nb = o.label ? buildGrid(src, { ...o, colors: 'mono' }, Math.max(0.25, o.width / PREVIEW_CELLS)).nameBox : null;
+      const nb = o.label ? buildGrid(src, { ...o, colors: 'mono', specs: false }, Math.max(0.25, o.width / PREVIEW_CELLS)).nameBox : null;
       const G = buildGrid(src, { ...o, nameAt: nb }, Math.max(0.25, o.width / MAX_CELLS));
       const M = buildMesh(G);
       const name = `${r.name} · Slope Spy`;

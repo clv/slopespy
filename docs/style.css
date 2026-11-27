@@ -288,6 +288,7 @@ header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
 .print-form { display: grid; grid-template-columns: 1fr; gap: 10px; }
 .prow { display: grid; grid-template-columns: 74px minmax(0, 1fr); align-items: center; column-gap: 10px; }
 .prow.sub { margin-top: -4px; }
+.prow[hidden] { display: none; }
 .prow .pctl { display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; min-width: 0; }
 .plab { color: var(--muted); font-size: 12px; }
 .pseg { display: flex; width: 100%; padding: 2px; gap: 2px; border-radius: 8px; background: var(--input); border: 1px solid var(--line); }
