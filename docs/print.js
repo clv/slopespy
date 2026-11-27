@@ -232,20 +232,22 @@ function buildGrid(src, o, cell) {
 }
 
 // The print's details, engraved 0.6 mm into the underside, mirrored so they read with the print turned over
-const ENGRAVE = 0.6;
+// Big, heavy lettering: an FDM nozzle (0.4 mm) needs strokes of a few widths, and the build plate's texture
+// swallows anything shallow, so letters are at least ~2.4 mm tall (body), 1 mm deep, and thickened.
+const ENGRAVE = 1.0, TITLE = 1.55;
 function specLines(G, src, o) {
   const r = src.meta || {}, fmt = v => Math.round(v).toLocaleString('en-US');
   const { px0, py0, px1, py1, z } = G.region;
   const lat = px2lat((py0 + py1) / 2, z), lon = ((px0 + px1) / 2) / worldPx(z) * 360 - 180;
-  const ll = `${Math.abs(lat).toFixed(3)}° ${lat < 0 ? 'S' : 'N'}  ${Math.abs(lon).toFixed(3)}° ${lon < 0 ? 'W' : 'E'}`;
-  const where = [r.region, r.countryName].filter(Boolean).join(', ');
   return [
     src.name || '',
-    [where, ll].filter(Boolean).join('  ·  '),
-    `1:${fmt(Math.round(G.scale / 100) * 100)}  ·  vertical ${o.exag}×  ·  ${fmt(G.size[0])} × ${fmt(G.size[1])} × ${fmt(G.size[2])} mm`,
-    `${fmt(G.elev[0])}–${fmt(G.elev[1])} m  ·  base ${o.base} mm  ·  N ↑`,
+    [r.region, r.countryName].filter(Boolean).join(', '),
+    `${Math.abs(lat).toFixed(2)}° ${lat < 0 ? 'S' : 'N'}   ${Math.abs(lon).toFixed(2)}° ${lon < 0 ? 'W' : 'E'}`,
+    `1:${fmt(Math.round(G.scale / 100) * 100)}  ·  ${o.exag}× vertical`,
+    `${fmt(G.size[0])} × ${fmt(G.size[1])} × ${fmt(G.size[2])} mm`,
+    `${fmt(G.elev[0])}–${fmt(G.elev[1])} m`,
     `slopespy.com  ·  ${new Date().toISOString().slice(0, 10)}`,
-  ];
+  ].filter(Boolean);
 }
 function engraveSpecs(G, src, o) {
   const { nx, ny, cell } = G;
@@ -253,9 +255,8 @@ function engraveSpecs(G, src, o) {
   const all = specLines(G, src, o);
   const font = (wt, px) => `${wt} ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   const m = new OffscreenCanvas(8, 8).getContext('2d');
-  const widthOf = (ls, fs) => Math.max(...ls.map((t, i) => { m.font = font(i ? 600 : 750, (i ? 1 : 1.35) * fs); return m.measureText(t).width; }));
+  const widthOf = (ls, fs) => Math.max(...ls.map((t, i) => { m.font = font(i ? 700 : 800, (i ? 1 : TITLE) * fs); return m.measureText(t).width + t.length * (i ? 1 : TITLE) * fs * 0.06 + fs * 0.1; }));
   // a narrower layout: long lines broken at their middle separator
-  const split = all.flatMap((t, i) => { const p = t.split('  ·  '); if (!i || p.length < 2) return [t]; const h = Math.ceil(p.length / 2); return [p.slice(0, h).join('  ·  '), p.slice(h).join('  ·  ')]; });
   // where the panel may go: inside the outline (cut prints) with a cell to spare, as near the middle as it can be
   const sOut = (() => { if (!G.inside) return null; const t = new Float64Array((nx + 1) * (ny + 1));
     for (let j = 0; j < ny; j++) { let row = 0; for (let i = 0; i < nx; i++) { row += G.inside[j * nx + i] ? 0 : 1; t[(j + 1) * (nx + 1) + i + 1] = t[j * (nx + 1) + i + 1] + row; } }
@@ -273,9 +274,12 @@ function engraveSpecs(G, src, o) {
     return best;
   };
   let lines = null, fs = 0, bw = 0, bh = 0, bi0 = 0, bj0 = 0;
-  const start = Math.min(3.2, Math.max(2.2, G.size[0] * 0.02));
-  search: for (let f = start; f >= 1.6 - 1e-9; f -= 0.2) for (const ls of [all, split, [all[0], all[2], all[4]], [all[0], all[2]]]) {   // all of it, wrapped, or the essentials
-    const lh = f * 1.45, wmm = widthOf(ls, f) + 2 * f, hmm = lh * (ls.length + 0.35) + f * 0.6;
+  // biggest letters that fit, preferring fewer, larger lines to many small ones
+  const pick = idx => idx.map(i => all[i]).filter(Boolean);
+  const n = all.length, essentials = pick([0, n - 4, n - 3, n - 1]), minimal = pick([0, n - 4, n - 3]);
+  const start = Math.min(6, Math.max(3, G.size[0] * 0.04));
+  search: for (let f = start; f >= 2.4 - 1e-9; f -= 0.2) for (const ls of f >= 3.2 || f === start ? [all, essentials] : [all, essentials, minimal]) {
+    const lh = f * 1.32, wmm = widthOf(ls, f) + 2 * f, hmm = lh * (ls.length + TITLE - 1 + 0.3) + f * 0.6;
     const w = Math.ceil(wmm / cell), h = Math.ceil(hmm / cell);
     if (w + 4 >= nx || h + 4 >= ny) continue;
     const p = G.inside ? fit(w, h) : { i0: Math.round((nx - 1 - w) / 2), j0: Math.round((ny - 1 - h) / 2) };
@@ -284,20 +288,25 @@ function engraveSpecs(G, src, o) {
     break search;
   }
   if (!lines) return null;                                                       // no room for legible text
-  const lh = fs * 1.45;
+  const lh = fs * 1.32, depthMM = Math.min(ENGRAVE, o.base * 0.4);
   const SS = 3, cv = new OffscreenCanvas(bw * SS, bh * SS), x = cv.getContext('2d', { willReadFrequently: true });
   const k = SS / cell;
   x.translate(bw * SS, 0); x.scale(-1, 1);                                        // mirrored: read from below
-  x.fillStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle';
+  x.fillStyle = x.strokeStyle = '#fff'; x.textAlign = 'center'; x.textBaseline = 'middle'; x.lineJoin = 'round';
+  let y = fs * 0.5;
   lines.forEach((t, i) => {
-    x.font = font(i ? 600 : 750, (i ? 1 : 1.35) * fs * k);
-    x.fillText(t, bw * SS / 2, (fs * 0.5 + lh * (i + 0.5) + (i ? lh * 0.35 : 0)) * k);
+    const sz = (i ? 1 : TITLE) * fs, rowH = i ? lh : lh * TITLE;
+    x.font = font(i ? 700 : 800, sz * k);
+    x.lineWidth = sz * 0.025 * k; x.letterSpacing = `${(sz * 0.06 * k).toFixed(2)}px`;   // a touch heavier, and air between letters
+    const cy = (y + rowH / 2) * k;
+    x.fillText(t, bw * SS / 2, cy); x.strokeText(t, bw * SS / 2, cy);
+    y += rowH + (i === 0 ? lh * 0.3 : 0);
   });
   const px = x.getImageData(0, 0, bw * SS, bh * SS).data, depth = new Float32Array((bw + 1) * (bh + 1));
   for (let j = 0; j < bh; j++) for (let i = 0; i < bw; i++) {
     let a = 0;
     for (let b = 0; b < SS; b++) for (let c = 0; c < SS; c++) a += px[4 * ((j * SS + b) * bw * SS + i * SS + c) + 3];
-    depth[j * (bw + 1) + i] = ENGRAVE * a / (255 * SS * SS);
+    depth[j * (bw + 1) + i] = depthMM * Math.min(1, 1.3 * a / (255 * SS * SS));   // full depth except at letter edges
   }
   return { i0: bi0, j0: bj0, w: bw, h: bh, depth, lines, fs };
 }
