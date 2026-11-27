@@ -13,7 +13,7 @@ const esc = s => String(s ?? '').replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': 
 
 // ---------- settings (remembered per browser) ----------
 const KEY = 'sc.print';
-const factory = viewer => ({ format: 'stl', colors: 'mono', relief: true, label: true, width: 150, size: 'width', exag: viewer.exag, area: 'model', base: 4 });
+const factory = viewer => ({ format: 'stl', colors: 'mono', relief: true, label: true, width: 150, size: 'width', scale: 50000, exag: viewer.exag, area: 'model', base: 4 });
 function loadOpts(viewer) {
   let o = {};
   try { o = JSON.parse(localStorage.getItem(KEY) || '{}'); } catch {}
@@ -171,7 +171,7 @@ function buildGrid(src, o, cell) {
     }
   }
 
-  const text = o.label && src.name ? placeLabel({ nx, ny, cell, Z0, Z, busy: k => run[k] + lift[k] }, src.name, o.width) : null;
+  const text = o.label && src.name ? placeLabel({ nx, ny, cell, Z0, Z, lift, run }, src.name, o.width) : null;
 
   // colour slot per grid point
   const pal = palette(o.colors, src.conv);
@@ -201,7 +201,7 @@ function buildGrid(src, o, cell) {
 // The resort's name, raised 1 mm, in the flattest low-lying spot that no run or lift crosses (usually a valley floor).
 // Smooths away the textures under it so the letters read. Returns the letter mask (0..1 per grid point).
 function placeLabel(g, name, width) {
-  const { nx, ny, cell, Z0, Z, busy } = g;
+  const { nx, ny, cell, Z0, Z } = g;
   let fs = Math.max(4, width * 0.045) / cell;                    // letter height in cells
   const font = px => `700 ${px}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   const meas = new OffscreenCanvas(8, 8).getContext('2d');
@@ -213,16 +213,23 @@ function placeLabel(g, name, width) {
   if (bw + 2 * margin >= nx || bh + 2 * margin >= ny) return null;
   let zlo = Infinity, zhi = -Infinity;
   for (let k = 0; k < Z0.length; k++) { if (Z0[k] < zlo) zlo = Z0[k]; if (Z0[k] > zhi) zhi = Z0[k]; }
-  const step = Math.max(1, Math.round(fs / 3)), sub = Math.max(1, Math.round(fs / 5));
+  // Summed-area tables: lifts (grown by ~2 mm so their names clear it too, never crossed), runs (avoided strongly), height and height²
+  const grow = Math.max(1, Math.round(2 / cell));
+  const liftD = new Uint8Array(nx * ny);
+  for (let j = 0; j < ny; j++) for (let i = 0; i < nx; i++) if (g.lift[j * nx + i] > 0.2)
+    for (let b = Math.max(0, j - grow); b <= Math.min(ny - 1, j + grow); b++) for (let a = Math.max(0, i - grow); a <= Math.min(nx - 1, i + grow); a++) liftD[b * nx + a] = 1;
+  const sat = f => { const t = new Float64Array((nx + 1) * (ny + 1));
+    for (let j = 0; j < ny; j++) { let row = 0; for (let i = 0; i < nx; i++) { row += f(j * nx + i); t[(j + 1) * (nx + 1) + i + 1] = t[j * (nx + 1) + i + 1] + row; } }
+    return (i0, j0, w, h) => t[(j0 + h) * (nx + 1) + i0 + w] - t[j0 * (nx + 1) + i0 + w] - t[(j0 + h) * (nx + 1) + i0] + t[j0 * (nx + 1) + i0]; };
+  const sLift = sat(k => liftD[k]), sRun = sat(k => g.run[k] > 0.3 ? 1 : 0), sZ = sat(k => Z0[k]), sZ2 = sat(k => Z0[k] * Z0[k]);
+  const step = Math.max(1, Math.round(fs / 4)), n = (bw + 1) * (bh + 1);
   let best = null;
   for (let j0 = margin; j0 + bh < ny - margin; j0 += step) for (let i0 = margin; i0 + bw < nx - margin; i0 += step) {
-    let lo = Infinity, hi = -Infinity, sum = 0, n = 0, hit = 0;
-    for (let j = j0; j <= j0 + bh; j += sub) for (let i = i0; i <= i0 + bw; i += sub) {
-      const k = j * nx + i, v = Z0[k];
-      if (v < lo) lo = v; if (v > hi) hi = v; sum += v; n++; hit += busy(k) > 0.3 ? 1 : 0;
-    }
-    const score = (hi - lo) + 0.5 * (sum / n - zlo) + 25 * hit / n;   // flat, low, clear of runs and lifts
-    if (!best || score < best.score) best = { score, i0, j0, lo, hi };
+    const lifts = sLift(i0, j0, bw + 1, bh + 1), runs = sRun(i0, j0, bw + 1, bh + 1) / n;
+    const mean = sZ(i0, j0, bw + 1, bh + 1) / n, sd = Math.sqrt(Math.max(0, sZ2(i0, j0, bw + 1, bh + 1) / n - mean * mean));
+    // flat, low, clear of runs; any lift is disqualifying unless nothing else is free
+    const score = 3 * sd + 0.5 * (mean - zlo) + 60 * runs + (lifts ? 1e6 + lifts : 0);
+    if (!best || score < best.score) best = { score, i0, j0 };
   }
   if (!best) return null;
   const SS = 3, cv = new OffscreenCanvas(bw * SS, bh * SS), x = cv.getContext('2d', { willReadFrequently: true });
@@ -238,7 +245,7 @@ function placeLabel(g, name, width) {
     // no textures around the letters; the letters follow the ground 1 mm proud of it
     Z[k] = Z0[k] + 1.0 * a;
   }
-  mask.box = { x: (best.i0 + bw / 2) * cell, y: (best.j0 + bh / 2) * cell, size: fs * cell };
+  mask.box = { x: (best.i0 + bw / 2) * cell, y: (best.j0 + bh / 2) * cell, size: fs * cell, w: bw * cell, h: bh * cell };
   return mask;
 }
 
@@ -443,6 +450,10 @@ async function bakeTexture(src, G, maxPx) {
 
   // lift names inline on the lift, never upside down (the viewer's own label artwork)
   const taken = [];
+  if (G.nameBox) {   // peak and place names keep clear of the resort's name
+    const b = G.nameBox, sx = W / G.size[0], sy = H / G.size[1];
+    taken.push({ x0: (b.x - b.w / 2) * sx, x1: (b.x + b.w / 2) * sx, y0: (b.y - b.h / 2) * sy, y1: (b.y + b.h / 2) * sy });
+  }
   const free = b => !taken.some(t => b.x0 < t.x1 && b.x1 > t.x0 && b.y0 < t.y1 && b.y1 > t.y0);
   if (src.labelCanvas) {
     const labs = [];
@@ -574,6 +585,8 @@ const SMALL = matchMedia('(pointer: coarse)').matches || innerWidth < 800;
 const PREVIEW_TEX = SMALL ? 1024 : 2048;   // full-colour texture, long side
 const fullTex = width => Math.min(SMALL ? 4096 : 8192, Math.ceil(width * 25));   // ~25 px/mm, a little past PolyJet's ~600 dpi
 
+const row = (label, ctl, cls = '') => `<div class="prow ${cls}"><span class="plab">${label}</span><div class="pctl">${ctl}</div></div>`;
+const seg = (name, opts) => `<div class="seg" role="radiogroup">${opts.map(([v, t]) => `<label><input type="radio" name="${name}" value="${v}"><span>${t}</span></label>`).join('')}</div>`;
 function ensureDialog() {
   if (dlg) return dlg;
   dlg = document.createElement('div');
@@ -585,26 +598,19 @@ function ensureDialog() {
       <div class="print-preview"><canvas></canvas><div class="print-busy" hidden>Building…</div></div>
       <p class="print-info"></p>
       <form class="print-form">
-        <fieldset><legend>Format</legend>
-          <label><input type="radio" name="format" value="stl"> STL</label>
-          <label><input type="radio" name="format" value="3mf"> 3MF</label>
-          <label><input type="radio" name="format" value="obj"> OBJ <span class="muted">zip</span></label></fieldset>
-        <fieldset><legend>Colors</legend>
-          <label><input type="radio" name="colors" value="mono"> Single color</label>
-          <label><input type="radio" name="colors" value="4"> 4 colors</label>
-          <label><input type="radio" name="colors" value="8"> 8 colors</label>
-          <label><input type="radio" name="colors" value="full"> Full color</label></fieldset>
-        <fieldset class="wide"><label class="check"><input type="checkbox" name="relief"> Relief textures <span class="muted">forest bumps, engraved runs, raised lifts, buildings and boundary</span></label>
-          <label class="check"><input type="checkbox" name="label"> Resort name <span class="muted">raised 1 mm, following the ground in a low spot</span></label></fieldset>
-        <fieldset class="wide"><legend>Size</legend>
-          <label><input type="radio" name="size" value="width"> Width <select name="width">${[100, 150, 200, 250].map(v => `<option value="${v}">${v} mm</option>`).join('')}</select></label>
-          ${SCALES.map(v => `<label><input type="radio" name="size" value="${v}"> 1:${v.toLocaleString('en-US')}</label>`).join('')}
-          <span class="muted size-hint">A fixed scale keeps prints of different resorts comparable</span></fieldset>
-        <fieldset><legend>Vertical</legend><select name="exag">${[1, 1.5, 2, 3].map(v => `<option value="${v}">${v}×</option>`).join('')}</select></fieldset>
-        <fieldset><legend>Base</legend><select name="base">${[2, 4, 6, 10].map(v => `<option value="${v}">${v} mm</option>`).join('')}</select></fieldset>
-        <fieldset><legend>Area</legend>
-          <label><input type="radio" name="area" value="model"> Whole model</label>
-          <label><input type="radio" name="area" value="ski"> Ski area only</label></fieldset>
+        ${row('Format', seg('format', [['stl', 'STL'], ['3mf', '3MF'], ['obj', 'OBJ']]))}
+        ${row('Colors', seg('colors', [['mono', 'Single'], ['4', '4'], ['8', '8'], ['full', 'Full']]))}
+        ${row('Size', seg('sizeMode', [['width', 'Fixed width'], ['scale', 'Fixed scale']]))}
+        ${row('', `<select name="width" aria-label="Width">${[100, 150, 200, 250].map(v => `<option value="${v}">${v} mm wide</option>`).join('')}</select>
+          <select name="scale" aria-label="Scale">${SCALES.map(v => `<option value="${v}">1:${v.toLocaleString('en-US')}</option>`).join('')}</select>
+          <small class="hint size-hint">Same scale, comparable prints</small>`, 'sub')}
+        ${row('Vertical', seg('exag', [1, 1.5, 2, 3].map(v => [v, `${v}×`])))}
+        ${row('Base', seg('base', [2, 4, 6, 10].map(v => [v, `${v} mm`])))}
+        ${row('Area', seg('area', [['model', 'Whole model'], ['ski', 'Ski area']]))}
+        <div class="prow opts"><span class="plab">Details</span><div class="pctl">
+          <label class="opt"><input type="checkbox" name="relief"><span>Relief textures<small>Forest bumps, engraved runs, raised lifts, buildings and boundary</small></span></label>
+          <label class="opt"><input type="checkbox" name="label"><span>Resort name<small>Raised 1 mm in a low, open spot</small></span></label>
+        </div></div>
       </form>
       <div class="print-legend"></div>
     </div>
@@ -621,7 +627,8 @@ function readForm(form) {
   const pick = n => form.querySelector(`[name="${n}"]:checked`)?.value;   // (disabled radios still count)
   const format = pick('format');
   const colors = format === '3mf' && form.dataset.format === '3mf' ? pick('colors') || 'mono' : form.dataset.colors || 'mono';
-  return { format, colors, relief: form.relief.checked, label: form.label.checked, width: +form.width.value, size: pick('size') || 'width', exag: +form.exag.value, base: +form.base.value, area: pick('area') };
+  return { format, colors, relief: form.relief.checked, label: form.label.checked, width: +form.width.value, scale: +form.scale.value,
+    size: pick('sizeMode') === 'scale' ? form.scale.value : 'width', exag: +pick('exag'), base: +pick('base'), area: pick('area') };
 }
 // STL carries no colour, so it always prints single-colour (the colour choice is kept for when 3MF is picked again)
 // OBJ is for full-colour printers (Stratasys PolyJet, HP MJF, Mimaki), so it always carries the texture
@@ -629,13 +636,16 @@ const effective = o => o.format === 'stl' ? { ...o, colors: 'mono' } : o.format 
 function writeForm(form, o) {
   form.dataset.colors = o.colors;   // the 3MF colour choice, kept while STL or OBJ force their own
   form.dataset.format = o.format;
-  for (const k of ['format', 'colors', 'area', 'size']) { const el = form.querySelector(`[name="${k}"][value="${o[k]}"]`); if (el) el.checked = true; }
+  for (const k of ['format', 'colors', 'area', 'exag', 'base']) { const el = form.querySelector(`[name="${k}"][value="${o[k]}"]`); if (el) el.checked = true; }
   form.relief.checked = o.relief; form.label.checked = o.label;
-  form.width.disabled = o.size !== 'width';
-  for (const k of ['width', 'exag', 'base']) form[k].value = String(o[k]);
+  const byScale = o.size !== 'width';
+  form.querySelector(`[name="sizeMode"][value="${byScale ? 'scale' : 'width'}"]`).checked = true;
+  form.width.hidden = byScale; form.scale.hidden = !byScale; form.querySelector('.size-hint').hidden = !byScale;
+  form.scale.value = String(byScale ? o.size : o.scale || 50000);
+  form.width.value = String(o.width);
   for (const el of form.querySelectorAll('[name="colors"]')) el.disabled = o.format === 'stl' || (o.format === 'obj' && el.value !== 'full');
   { const el = form.querySelector(`[name="colors"][value="${effective(o).colors}"]`); if (el) el.checked = true; }
-  form.querySelector('[name="colors"]').closest('fieldset').classList.toggle('off', o.format === 'stl');
+
 }
 
 function setupView(canvas) {
@@ -679,8 +689,14 @@ function showPreview(G, o, refit, T) {
   if (view.mesh) { view.scene.remove(view.mesh); view.mesh.geometry.dispose(); view.mesh.material.map?.dispose(); view.mesh.material.dispose(); }
   view.mesh = new THREE.Mesh(geo, mat);
   view.scene.add(view.mesh);
+  const r = Math.max(G.size[0], G.size[1]);
+  if (!refit && view.r && Math.abs(r / view.r - 1) > 1e-3) {   // new size: same view, scaled with the model
+    const k = r / view.r;
+    view.camera.position.multiplyScalar(k); view.controls.target.multiplyScalar(k);
+    view.camera.near = r / 100; view.camera.far = r * 20; view.camera.updateProjectionMatrix();
+  }
+  view.r = r;
   if (refit) {
-    const r = Math.max(G.size[0], G.size[1]);
     view.controls.target.set(0, G.size[2] * 0.35, 0);
     view.camera.position.set(-r * 0.15, r * 0.85, r * 1.25);
     view.camera.near = r / 100; view.camera.far = r * 20; view.camera.updateProjectionMatrix();
@@ -710,7 +726,6 @@ export function openPrint({ S, viewer }) {
     o = resolveWidth(src, o);
     const key = JSON.stringify([r.id, effective(o).colors, o.relief, o.label, o.width, o.exag, o.base, o.area]);
     if (key === lastKey && !refit) return;
-    const areaChanged = !lastKey || JSON.parse(lastKey)[7] !== o.area || JSON.parse(lastKey)[4] !== o.width;
     lastKey = key;
     busy.hidden = false;
     clearTimeout(timer);
@@ -720,13 +735,14 @@ export function openPrint({ S, viewer }) {
       const G = buildGrid(src, eo, Math.max(0.25, o.width / PREVIEW_CELLS));
       const T = eo.colors === 'full' ? await bakeTexture(src, G, PREVIEW_TEX) : null;
       if (seq !== updSeq) return;
-      showPreview(G, o, refit || areaChanged, T);
+      showPreview(G, o, refit, T);
       const full = Math.max(0.25, o.width / MAX_CELLS);
       const cells = Math.round(G.size[0] / full + 1) * Math.round(G.size[1] / full + 1);
       const tris = cells * 2 + 4 * Math.sqrt(cells) * 2;
       const mb = o.format === 'stl' ? tris * 50 / 1e6 : eo.colors === 'full' ? tris * 16 / 1e6 + 12 : tris * (eo.colors === 'mono' ? 14 : 18) / 1e6;
-      info.textContent = `${Math.round(G.size[0])} × ${Math.round(G.size[1])} mm, ${Math.round(G.size[2])} mm tall · scale 1:${(Math.round(G.scale / 100) * 100).toLocaleString()} · about ${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB${Math.max(G.size[0], G.size[1]) > 256 ? ' · bigger than a 256 mm print bed' : ''}`;
-      legend.innerHTML = G.pal ? G.pal.map((p, i) => `<span><i style="background:${p.hex}"></i>${i + 1} ${esc(p.name)}</span>`).join('') : '';
+      const big = Math.max(G.size[0], G.size[1]) > 256;
+      info.innerHTML = `<b>${Math.round(G.size[0])} × ${Math.round(G.size[1])} × ${Math.round(G.size[2])} mm</b><span>1:${(Math.round(G.scale / 100) * 100).toLocaleString('en-US')} · about ${mb < 10 ? mb.toFixed(1) : Math.round(mb)} MB</span>${big ? '<em>Larger than a 256 mm print bed</em>' : ''}`;
+      legend.innerHTML = G.pal ? `<span class="plab">Filaments</span><div>${G.pal.map((p, i) => `<span><i style="background:${p.hex}"></i><b>${i + 1}</b> ${esc(p.name)}</span>`).join('')}</div>` : '';
       note.textContent = eo.colors === 'full' ? 'Textured, for full-color printers: Stratasys PolyJet via GrabCAD Print, HP Multi Jet Fusion, Mimaki, and print services'
         : o.format === '3mf' && eo.colors !== 'mono' ? 'Colors are painted for Bambu Studio, OrcaSlicer and PrusaSlicer' : '';
       busy.hidden = true;

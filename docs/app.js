@@ -334,7 +334,7 @@ function setupPickers() {
   panels.forEach((p, i) => $('.pick', p).addEventListener('click', () => openPicker(i)));
   $('#swap').addEventListener('click', () => {
     const a = sides[0].resort?.id, b = sides[1].resort?.id;
-    if (a && b) Promise.all([selectResort(0, b, false), selectResort(1, a, false)]).then(fitCamera);
+    if (a && b) Promise.all([selectResort(0, b, false), selectResort(1, a, false)]).then(requestRender);   // same two models: keep the view
   });
   // about / credits
   const about = $('#about');
@@ -406,7 +406,7 @@ async function selectResort(side, id, refit = true) {
     renderPanel(side, meta, S);
     setStatus(side, '');
     applyVertical();
-    if (refit) fitCamera(); else requestRender();
+    if (refit) fitCamera(true); else requestRender();
   } catch (err) {
     console.error(err);
     if (token === S.token) setStatus(side, 'Failed to load: ' + err.message);
@@ -1442,7 +1442,7 @@ function setMode(mode, refit = true) {
   updateHash();
   resize();
   applyVertical();
-  if (refit && (was === 'single') !== (mode === 'single')) fitCamera();
+  if (refit && (was === 'single') !== (mode === 'single')) fitCamera(true);
 }
 
 // The mountain shapes from the logo, in units of peak height (peak at 0,0, base at y = 1).
@@ -1500,13 +1500,25 @@ function updateLegend() {
 }
 
 // ---------- camera ----------
-function fitCamera() {
+// Frames the model(s). keepAngle: only re-centre and re-zoom, keeping the direction the user is looking from
+// (a new resort or a layout change); without it, back to the default view (start-up and the reset button).
+function fitCamera(keepAngle = false) {
   const ext = Math.max(...(settings.mode === 'single' ? sides.slice(0, 1) : sides).map(S => S.extent || 0), 2000);
   const vfov = camera.fov * DEG;
   const hfov = 2 * Math.atan(Math.tan(vfov / 2) * camera.aspect);
   const d = (ext * 0.55) / Math.tan(Math.min(vfov, hfov) / 2);
   const phi = { '3d': 58 * DEG, top: 0.0001 }[settings.view] ?? 58 * DEG;
   const dist = settings.view === '3d' ? d * 0.85 : d;
+  if (keepAngle) {
+    const dir = camera.position.clone().sub(controls.target);
+    if (dir.lengthSq() > 0) {
+      controls.target.set(0, 0, 0);
+      camera.position.copy(dir.setLength(dist));
+      controls.update();
+      requestRender();
+      return;
+    }
+  }
   controls.target.set(0, 0, 0);
   camera.position.set(0, dist * Math.cos(phi), dist * Math.sin(phi));
   camera.up.set(0, 1, 0);
