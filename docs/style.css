@@ -330,10 +330,13 @@ header:has(#elevSingle.on) #swap { opacity: .35; pointer-events: none; }
   .print-form select { font-size: 16px; }
 }
 
-/* Browse: layout, sort key and direction */
-.results li.sortbar { display: flex; align-items: center; gap: 6px; padding: 4px 10px 8px; cursor: default; }
-.results li.sortbar:hover { background: none; }
+/* Browse: header row with layout, sort key and direction */
+.results li.h1.sortbar { display: flex; align-items: center; gap: 6px; padding-bottom: 7px; cursor: default; }
+.results li.sortbar:hover { background: #161e27; }
+.sortbar .bt { margin-right: 4px; }
+.sortbar .seg, .sortbar select, .sortbar .btn { text-transform: none; letter-spacing: 0; font-weight: 400; }
 .sortbar .seg.mode button { padding: 3px 9px; font-size: 12.5px; }
-.sortbar select { flex: 1; min-width: 0; background: var(--input); color: var(--fg); border: 1px solid var(--line); border-radius: 7px; padding: 3px 6px; font: inherit; font-size: 12.5px; }
+.sortbar select { flex: 1; min-width: 0; background: var(--input); color: var(--fg); border: 1px solid var(--line); border-radius: 7px; padding: 3px 6px; font: inherit; font-size: 12.5px; font-weight: 400; text-transform: none; letter-spacing: 0; }
 .sortbar .btn.dir { padding: 2px 9px; font-size: 14px; line-height: 1.3; }
-@media (max-width: 760px) { .sortbar select { font-size: 16px; } }
+.sortbar .v { margin-left: 2px; }
+@media (max-width: 760px) { .sortbar select { font-size: 16px; padding: 2px 4px; } .sortbar .seg.mode button { padding: 3px 6px; } .sortbar .v { display: none; } .sortbar .bt { margin-right: 0; } }

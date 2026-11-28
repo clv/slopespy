@@ -232,10 +232,9 @@ function setupPickers() {
       for (const [r, d] of near.slice(0, picker.nearN)) html += row(r, `${fmt(d)} km away`);
       if (near.length > picker.nearN) html += '<li class="node more" data-near role="button">Show more nearby</li>';
     }
-    html += `<li class="h1">Browse<span class="v">${fmt(INDEX.length)}</span></li>`;
-    html += `<li class="sortbar"><span class="seg mode" role="radiogroup" aria-label="Layout">${[['group', 'By country'], ['flat', 'Flat']].map(([v, t]) => `<button type="button" data-mode="${v}" role="radio" aria-checked="${browse.mode === v}" class="${browse.mode === v ? 'on' : ''}">${t}</button>`).join('')}</span>`
+    html += `<li class="h1 sortbar"><span class="bt">Browse</span><span class="seg mode" role="radiogroup" aria-label="Layout">${[['group', 'By country'], ['flat', 'Flat']].map(([v, t]) => `<button type="button" data-mode="${v}" role="radio" aria-checked="${browse.mode === v}" class="${browse.mode === v ? 'on' : ''}">${t}</button>`).join('')}</span>`
       + `<select class="sortkey" aria-label="Sort by">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}"${k === browse.key ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`
-      + `<button type="button" class="btn dir" aria-label="${browse.desc ? 'Descending' : 'Ascending'}" title="${browse.desc ? 'Descending, click for ascending' : 'Ascending, click for descending'}">${browse.desc ? '↓' : '↑'}</button></li>`;
+      + `<button type="button" class="btn dir" aria-label="${browse.desc ? 'Descending' : 'Ascending'}" title="${browse.desc ? 'Descending, click for ascending' : 'Ascending, click for descending'}">${browse.desc ? '↓' : '↑'}</button><span class="v">${fmt(INDEX.length)}</span></li>`;
     if (browse.mode === 'flat') {
       const start = picker.items.length;
       for (const r of sortRs(INDEX)) picker.items.push({ r, val: metricVal(r) });
