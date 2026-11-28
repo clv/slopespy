@@ -134,9 +134,12 @@ function buildGrid(src, o, cell) {
   const lift = raster(g => { g.lineWidth = lw(0.7); g.beginPath(); rings(data.lifts, (f, r) => path(g, r)); g.stroke(); });
   const bnd = data.boundary ? raster(g => { g.lineWidth = lw(0.5); g.beginPath(); rings([data.boundary], (f, r) => { path(g, r); g.closePath(); }); g.stroke(); }) : null;
   const bld = features?.b?.length ? raster(g => {
-    g.beginPath();
-    for (const [, ring] of features.b) { path(g, ring); g.closePath(); }
-    g.fill();
+    // in chunks: closing tens of thousands of subpaths in one canvas path is quadratic in Chrome
+    for (let i = 0; i < features.b.length; i += 500) {
+      g.beginPath();
+      for (const [, ring] of features.b.slice(i, i + 500)) { path(g, ring); g.closePath(); }
+      g.fill();
+    }
   }) : null;
 
   // forest and water from the land-cover grid (which covers the terrain window), lightly smoothed
