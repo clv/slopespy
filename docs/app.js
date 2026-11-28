@@ -150,6 +150,27 @@ function nearestResorts(r, n) {
 }
 
 const picker = { side: 0, items: [], act: 0, nearN: 10 };
+// Browse: grouped (continent > country) or one flat list, sorted by a metric, either way round
+const SORTS = {
+  runKm: { label: 'Run length', get: r => r.runKm, fmt: v => `${fmt(v)} km of runs` },
+  name:  { label: 'Name', get: r => r.name, text: true },
+  nRuns: { label: 'Number of runs', get: r => r.nRuns, fmt: v => `${fmt(v)} runs` },
+  lifts: { label: 'Lifts', get: r => r.lifts, fmt: v => `${fmt(v)} lifts` },
+  vert:  { label: 'Vertical', get: r => r.vert, fmt: v => `${fmt(v)} m vertical` },
+  top:   { label: 'Top elevation', get: r => r.top, fmt: v => `${fmt(v)} m top` },
+  base:  { label: 'Base elevation', get: r => r.base, fmt: v => `${fmt(v)} m base` },
+};
+const browse = { mode: 'group', key: 'runKm', desc: true };   // the default is the original presentation
+try { Object.assign(browse, JSON.parse(localStorage.getItem('sc.browse') || '{}')); if (!SORTS[browse.key]) browse.key = 'runKm'; } catch {}
+const sortRs = list => {
+  const s = SORTS[browse.key], dir = browse.desc ? -1 : 1;
+  return list.slice().sort((a, b) => {
+    const va = s.get(a), vb = s.get(b);
+    if (va == null || va === '') return 1; if (vb == null || vb === '') return -1;   // unknowns last either way
+    return dir * (s.text ? String(va).localeCompare(String(vb)) : va - vb) || a.rank - b.rank;
+  });
+};
+const metricVal = r => SORTS[browse.key].fmt ? SORTS[browse.key].fmt(SORTS[browse.key].get(r)) : `${fmt(r.runKm)} km of runs`;
 function setupPickers() {
   const sheet = $('#picker'), input = $('#q'), list = $('.results', sheet), count = $('.count', sheet);
   // Rows are added in chunks as the list scrolls, so typing stays fast on phones.
@@ -212,6 +233,17 @@ function setupPickers() {
       if (near.length > picker.nearN) html += '<li class="node more" data-near role="button">Show more nearby</li>';
     }
     html += `<li class="h1">Browse<span class="v">${fmt(INDEX.length)}</span></li>`;
+    html += `<li class="sortbar"><span class="seg mode" role="radiogroup" aria-label="Layout">${[['group', 'By country'], ['flat', 'Flat']].map(([v, t]) => `<button type="button" data-mode="${v}" role="radio" aria-checked="${browse.mode === v}" class="${browse.mode === v ? 'on' : ''}">${t}</button>`).join('')}</span>`
+      + `<select class="sortkey" aria-label="Sort by">${Object.entries(SORTS).map(([k, v]) => `<option value="${k}"${k === browse.key ? ' selected' : ''}>${v.label}</option>`).join('')}</select>`
+      + `<button type="button" class="btn dir" aria-label="${browse.desc ? 'Descending' : 'Ascending'}" title="${browse.desc ? 'Descending, click for ascending' : 'Ascending, click for descending'}">${browse.desc ? '↓' : '↑'}</button></li>`;
+    if (browse.mode === 'flat') {
+      const start = picker.items.length;
+      for (const r of sortRs(INDEX)) picker.items.push({ r, val: metricVal(r) });
+      list.innerHTML = html;
+      shown = start; more();
+      count.textContent = ''; count.parentElement.hidden = true;
+      return;
+    }
     for (const [c, countries] of groups) {
       const n = [...countries.values()].reduce((s, l) => s + l.length, 0), open = tree.cont === c;
       html += `<li class="node cont${open ? ' open' : ''}" data-cont="${esc(c)}" role="button" aria-expanded="${open}"><span class="tw"></span>${esc(c)}<span class="v">${fmt(n)}</span></li>`;
@@ -227,10 +259,10 @@ function setupPickers() {
           const runKm = rs => rs.reduce((t, r) => t + (r.runKm || 0), 0);
           for (const [g, rs] of [...regions].sort((x, y) => runKm(y[1]) - runKm(x[1]))) {   // biggest regions first
             html += `<li class="h2 reg">${esc(g)} <span>${rs.length}</span></li>`;
-            for (const r of rs) html += row(r, km(r), '');
+            for (const r of sortRs(rs)) html += row(r, metricVal(r), '');
           }
         } else {
-          for (const r of top) html += row(r, km(r), r.region || '');
+          for (const r of sortRs(top)) html += row(r, metricVal(r), r.region || '');
           if (top.length < list.length) html += `<li class="node more" data-all="${esc(k)}" role="button">Show all ${fmt(list.length)} in ${esc(k)}</li>`;
         }
       }
@@ -266,7 +298,12 @@ function setupPickers() {
     more();
     list.scrollTop = 0;
   };
+  const resort = () => { try { localStorage.setItem('sc.browse', JSON.stringify(browse)); } catch {} const top = list.scrollTop; renderTree(); list.scrollTop = top; };
+  list.addEventListener('change', e => { if (e.target.matches('select.sortkey')) { browse.key = e.target.value; browse.desc = !SORTS[browse.key].text; resort(); } });
   list.addEventListener('click', e => {
+    const m = e.target.closest('.sortbar [data-mode]'), d = e.target.closest('.sortbar .dir');
+    if (m) { browse.mode = m.dataset.mode; resort(); return; }
+    if (d) { browse.desc = !browse.desc; resort(); return; }
     const n = e.target.closest('li.node');
     if (!n) return;
     const keepTop = n.getBoundingClientRect().top - list.getBoundingClientRect().top;
