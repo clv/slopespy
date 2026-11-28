@@ -815,6 +815,20 @@ async function loadLandcover(id) {
   return { w, h, cls, treeShare: trees / cls.length };
 }
 
+// Closed footprint rings as a few Path2D chunks (see paintGround); P maps [lon, lat] to canvas pixels.
+function footprintPaths(list, P, chunk = 500) {
+  const out = [];
+  for (let i = 0; i < list.length; i += chunk) {
+    const p = new Path2D();
+    for (let k = i; k < Math.min(list.length, i + chunk); k++) {
+      list[k][1].forEach((pt, j) => { const [x, y] = P(pt); j ? p.lineTo(x, y) : p.moveTo(x, y); });
+      p.closePath();
+    }
+    out.push(p);
+  }
+  return out;
+}
+
 // Paint the ground texture: land cover, then parking lots, roads and building footprints.
 function paintGround(lc, features, crop, z, widthM, boundary) {
   const small = new OffscreenCanvas(lc.w, lc.h);
@@ -847,10 +861,13 @@ function paintGround(lc, features, crop, z, widthM, boundary) {
       for (const line of features.r?.[k] || []) path(line);
       ctx.stroke();
     }
+    // Buildings go in chunks of Path2D: closing tens of thousands of subpaths in one canvas path is
+    // quadratic in Chrome (Dolomiti Superski's 58k footprints took ~50 s). All fills, then all outlines,
+    // so the result is the same as one big path.
     ctx.fillStyle = PAL.bldFill; ctx.strokeStyle = PAL.bldLine; ctx.lineWidth = 1;
-    ctx.beginPath();
-    for (const [, ring] of features.b || []) { path(ring); ctx.closePath(); }
-    ctx.fill(); ctx.stroke();
+    const paths = footprintPaths(features.b || [], P);
+    for (const p of paths) ctx.fill(p);
+    for (const p of paths) ctx.stroke(p);
   }
   // Inside/outside shading is applied on top of a saved copy, so it can be re-tuned live.
   let mask = null;
@@ -984,8 +1001,7 @@ function placeBuildings(mesh, exag) {
   if (!mesh) return;
   const { local, baseH } = mesh.userData, arr = mesh.geometry.attributes.position.array;
   for (let k = 0; k < baseH.length; k++) arr[3 * k + 1] = baseH[k] * exag + local[3 * k + 1];
-  mesh.geometry.attributes.position.needsUpdate = true;
-  mesh.geometry.computeVertexNormals();
+  mesh.geometry.attributes.position.needsUpdate = true;   // flat-shaded: the shader derives normals, none to recompute
   mesh.geometry.computeBoundingSphere();
 }
 
